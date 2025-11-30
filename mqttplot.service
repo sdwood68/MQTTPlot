@@ -1,0 +1,24 @@
+[Unit]
+Description=MQTTPlot - MQTT Data Dashboard and API
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/mqttplot
+ExecStart=/opt/mqttplot/venv/bin/python /opt/mqttplot/app.py
+
+Environment=MQTT_BROKER=localhost
+Environment=MQTT_PORT=1883
+Environment=MQTT_TOPICS=sensors/#
+Environment=FLASK_PORT=5000
+Environment=DB_PATH=/opt/mqttplot/mqtt_data.db
+
+Restart=always
+RestartSec=5
+User=ubuntu
+Group=ubuntu
+
+StandardOutput=append:/var/log/mqttplot/mqttplot.log
+StandardError=append:/var/log/mqttplot/mqttplot-error.log
+
+[Install]
+WantedBy=multi-user.target
