@@ -62,7 +62,7 @@ topics: #
 Override with environment variables:
 
 ```bash
-MQTT_BROKER=mybroker.local MQTT_TOPICS="sensors/temp,sensors/humidity" python app.py
+MQTT_BROKER=192.168.12.50.local MQTT_TOPICS="watergauge/#" python app.py
 ```
 ### 5️⃣ Publish sample data
 ```bash
