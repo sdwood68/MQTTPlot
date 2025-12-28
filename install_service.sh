@@ -27,13 +27,15 @@ sudo chmod -R 755 "$INSTALL_DIR"
 sudo chown -R $USER:$USER "$LOG_DIR"
 
 # --- Prompt for settings ---
-read -rp "Enter MQTT broker IP: " MQTT_BROKER
+read -rp "Enter MQTT broker IP [192.168.12.50]: " MQTT_BROKER
+MQTT_BROKER=${MQTT_BROKER:-192.168.12.50}
 read -rp "Enter MQTT port [1883]: " MQTT_PORT
 MQTT_PORT=${MQTT_PORT:-1883}
-read -rp "Enter MQTT username: " MQTT_USERNAME
+read -rp "Enter MQTT username [Lock32Gauge]: " MQTT_USERNAME
+MQTT_USERNAME=${MQTT_USERNAME:-Lock32Gauge}
 read -rp "Enter MQTT password (visible): " MQTT_PASSWORD
-read -rp "Enter MQTT topic filter (e.g. watergauge/#): " MQTT_TOPICS
-
+read -rp "Enter MQTT topic filter [watergauge/#]: " MQTT_TOPICS
+MQTT_TOPICS=${MQTT_TOPICS:-watergauge/#}
 read -rp "Enter Flask port [5000]: " FLASK_PORT
 FLASK_PORT=${FLASK_PORT:-5000}
 
