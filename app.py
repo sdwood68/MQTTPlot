@@ -77,7 +77,7 @@ def store_message(topic,payload):
     if value is not None:
         socketio.emit('new_data', {'topic':topic, 'ts': datetime.now().isoformat(), 'value': value})
 
-def on_connect(client, userdata, flags, rc):
+def on_connect(client, userdata, flags, rc, properties=None):
     if rc==0:
         print('MQTT connected')
         topics = [t.strip() for t in MQTT_TOPICS.split(',') if t.strip()]
@@ -94,7 +94,7 @@ def on_message(client, userdata, msg):
         print('store error', e)
 
 def mqtt_worker():
-    client = mqtt.Client()
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
     if MQTT_USERNAME:
         client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
     client.on_connect = on_connect
@@ -202,6 +202,34 @@ async function loadTopics(){ const res=await fetch('/api/topics'); const data=aw
 async function plot(){ const topic=document.getElementById('topicInput').value; if(!topic)return alert('Enter topic'); currentTopic=topic; const start=document.getElementById('start').value; const end=document.getElementById('end').value; let url=`/api/data?topic=${encodeURIComponent(topic)}`; if(start)url+=`&start=${encodeURIComponent(start)}`; if(end)url+=`&end=${encodeURIComponent(end)}`; const res=await fetch(url); const js=await res.json(); if(!js.length){document.getElementById('plot').innerHTML='No numeric data';return;} const trace={x:js.map(r=>r.ts),y:js.map(r=>r.value),mode:'lines+markers',name:topic}; const layout={title:topic,xaxis:{title:'Time'},yaxis:{title:'Value'}}; Plotly.newPlot('plot',[trace],layout); }
 loadTopics(); setInterval(loadTopics,10000);
 </script></body></html>"""
+
+@app.route('/viewer')
+def viewer():
+    conn = get_db()
+    cursor = conn.cursor()
+
+    topic = request.args.get("topic")
+    limit = int(request.args.get("limit", 100))
+
+    if topic:
+        cursor.execute("""
+            SELECT topic, payload, ts
+            FROM messages
+            WHERE topic = ?
+            ORDER BY ts DESC
+            LIMIT ?
+        """, (topic, limit))
+    else:
+        cursor.execute("""
+            SELECT topic, payload, ts
+            FROM messages
+            ORDER BY ts DESC
+            LIMIT ?
+        """, (limit,))
+
+    rows = cursor.fetchall()
+
+    cursor.execute
 
 from flask import render_template_string
 @app.route('/')
