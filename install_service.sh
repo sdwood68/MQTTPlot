@@ -38,8 +38,9 @@ read -rp "Enter MQTT topic filter [watergauge/#]: " MQTT_TOPICS
 MQTT_TOPICS=${MQTT_TOPICS:-watergauge/#}
 read -rp "Enter Flask port [5000]: " FLASK_PORT
 FLASK_PORT=${FLASK_PORT:-5000}
-
 DB_PATH="$INSTALL_DIR/mqtt_data.db"
+
+
 
 # --- Create secret.env with all variables ---
 echo "Creating protected secret.env file..."
@@ -58,6 +59,7 @@ sudo chmod 600 "$SECRET_FILE"
 
 # --- Create Python virtual environment ---
 echo "Creating Python virtual environment..."
+echo "  -User: $USER"
 sudo -u $USER python3 -m venv "$INSTALL_DIR/venv"
 
 # --- Install Python dependencies ---
@@ -73,14 +75,14 @@ Description=MQTTPlot Data Collector and Web Server
 After=network.target
 
 [Service]
-User=$USER
-Group=$USER
-WorkingDirectory=$INSTALL_DIR
-EnvironmentFile=$SECRET_FILE
-ExecStart=$INSTALL_DIR/venv/bin/python3 $INSTALL_DIR/app.py
+User=mqttplot
+Group=mqttplot
+WorkingDirectory=/opt/mqttplot
+EnvironmentFile=/opt/mqttplot/secret.env
+ExecStart=/opt/mqttplot/venv/bin/python3 /opt/mqttplot/app.py
 Restart=always
-StandardOutput=append:$LOG_DIR/mqttplot.log
-StandardError=append:$LOG_DIR/mqttplot.log
+StandardOutput=append:/var/log/mqttplot/mqttplot.log
+StandardError=append:/var/log/mqttplot/mqttplot.log
 
 [Install]
 WantedBy=multi-user.target
