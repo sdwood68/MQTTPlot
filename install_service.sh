@@ -12,25 +12,32 @@ INSTALL_DIR="/opt/mqttplot"
 SERVICE_FILE="/etc/systemd/system/mqttplot.service"
 LOG_DIR="/var/log/mqttplot"
 SECRET_FILE="$INSTALL_DIR/secret.env"
-# USER="mqttplot"
+REQUIREMENTS_FILE="requirements.txt"
 
 echo "=== MQTTPlot Installer ==="
 
+# --- Check requirements.txt exists ---
+if [[ ! -f "$REQUIREMENTS_FILE" ]]; then
+    echo "Error: $REQUIREMENTS_FILE not found in current directory."
+    echo "Please ensure requirements.txt exists before running installer."
+    exit 1
+fi
+
 # --- Create system user ---
 echo "Creating system user 'mqttplot' with home at $INSTALL_DIR..."
-sudo id -u mqttplot &>/dev/null || sudo useradd -r -s /usr/sbin/nologin -d "$INSTALL_DIR" mqttplot
+id -u mqttplot &>/dev/null || useradd -r -s /usr/sbin/nologin -d "$INSTALL_DIR" mqttplot
 
 # --- Create directories ---
-sudo mkdir -p "$INSTALL_DIR" "$LOG_DIR"
+mkdir -p "$INSTALL_DIR" "$LOG_DIR"
 
 # --- Copy project files ---
 echo "Copying project files..."
-sudo cp -r ./* "$INSTALL_DIR"
+cp -r ./* "$INSTALL_DIR"
 
 # --- Set ownership and permissions ---
-sudo chown -R mqttplot:mqttplot "$INSTALL_DIR"
-sudo chmod -R 755 "$INSTALL_DIR"
-sudo chown -R mqttplot:mqttplot "$LOG_DIR"
+chown -R mqttplot:mqttplot "$INSTALL_DIR"
+chmod -R 755 "$INSTALL_DIR"
+chown -R mqttplot:mqttplot "$LOG_DIR"
 
 # --- Default values ---
 DEFAULT_MQTT_BROKER="192.168.12.50"
@@ -75,9 +82,9 @@ echo "LOG_DIR=$LOG_DIR"
 echo "SECRET_FILE=$SECRET_FILE"
 echo "====================="
 
-# --- Create secret.env with all variables ---
+# --- Create secret.env ---
 echo "Creating protected secret.env file..."
-sudo bash -c "cat > $SECRET_FILE" <<EOF
+cat > "$SECRET_FILE" <<EOF
 MQTT_BROKER=$MQTT_BROKER
 MQTT_PORT=$MQTT_PORT
 MQTT_USERNAME=$MQTT_USERNAME
@@ -87,25 +94,26 @@ FLASK_PORT=$FLASK_PORT
 DB_PATH=$DB_PATH
 EOF
 
-sudo chown root:mqttplot /opt/mqttplot/secret.env
-sudo chmod 640 /opt/mqttplot/secret.env
+chown root:mqttplot "$SECRET_FILE"
+chmod 640 "$SECRET_FILE"
 
 # --- Create Python virtual environment ---
 echo "Creating Python virtual environment..."
 sudo -u mqttplot python3 -m venv "$INSTALL_DIR/venv"
 
-# --- Install required Python packages ---
-echo "Installing Python packages..."
-sudo -u mqttplot bash -c "
-source $INSTALL_DIR/venv/bin/activate
+# --- Install Python packages from requirements.txt ---
+echo "Installing Python packages from requirements.txt..."
+sudo -u mqttplot bash <<EOF
+set -e
+source "$INSTALL_DIR/venv/bin/activate"
 pip install --upgrade pip
-pip install flask flask_socketio eventlet plotly paho-mqtt waitress
+pip install -r "$INSTALL_DIR/requirements.txt"
 deactivate
-"
+EOF
 
 # --- Write systemd service file ---
 echo "Writing systemd service file..."
-sudo tee "$SERVICE_FILE" >/dev/null <<EOF
+tee "$SERVICE_FILE" >/dev/null <<EOF
 [Unit]
 Description=MQTTPlot Data Collector and Web Server
 After=network.target
@@ -115,14 +123,7 @@ User=mqttplot
 Group=mqttplot
 WorkingDirectory=$INSTALL_DIR
 EnvironmentFile=$SECRET_FILE
-Environment="DB_PATH=$DB_PATH"
-Environment="MQTT_BROKER=$MQTT_BROKER"
-Environment="MQTT_PORT=$MQTT_PORT"
-Environment="MQTT_TOPICS=$MQTT_TOPICS"
-Environment="FLASK_PORT=$FLASK_PORT"
-
 ExecStart=$INSTALL_DIR/venv/bin/python3 $INSTALL_DIR/app.py
-
 Restart=always
 StandardOutput=append:$LOG_DIR/mqttplot.log
 StandardError=append:$LOG_DIR/mqttplot.log
@@ -133,9 +134,9 @@ EOF
 
 # --- Enable and start service ---
 echo "Reloading systemd and starting MQTTPlot service..."
-sudo systemctl daemon-reload
-sudo systemctl enable mqttplot
-sudo systemctl restart mqttplot
+systemctl daemon-reload
+systemctl enable mqttplot
+systemctl restart mqttplot
 
 echo "=== Installation complete ==="
 echo "Logs: sudo tail -f $LOG_DIR/mqttplot.log"
