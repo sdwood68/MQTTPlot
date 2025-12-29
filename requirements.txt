@@ -4,3 +4,4 @@ eventlet>=0.33
 paho-mqtt>=1.6
 plotly>=5.15
 kaleido>=0.2  # for PNG export
+requests>=2.32

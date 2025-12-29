@@ -87,8 +87,8 @@ FLASK_PORT=$FLASK_PORT
 DB_PATH=$DB_PATH
 EOF
 
-sudo chown root:root "$SECRET_FILE"
-sudo chmod 600 "$SECRET_FILE"
+sudo chown root:mqttplot /opt/mqttplot/secret.env
+sudo chmod 640 /opt/mqttplot/secret.env
 
 # --- Create Python virtual environment ---
 echo "Creating Python virtual environment..."
