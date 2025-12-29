@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """MQTTPlot - app.py"""
-import os, io, json, time, threading, sqlite3
+import sys, os, io, json, time, threading, sqlite3
 from datetime import datetime
 from flask import Flask, g, jsonify, request, render_template_string, send_file
 from flask_socketio import SocketIO
 import paho.mqtt.client as mqtt
 import plotly.graph_objects as go
+
+# Register adapter and converter for datetime
+sqlite3.register_adapter(datetime, lambda val: val.isoformat(sep=' '))
+sqlite3.register_converter("timestamp", lambda val: datetime.fromisoformat(val.decode()))
 
 DB_PATH = os.environ.get('DB_PATH','/opt/mqttplot/mqtt_data.db')
 MQTT_BROKER = os.environ.get('MQTT_BROKER','192.168.12.50')
@@ -91,9 +95,10 @@ def on_message(client, userdata, msg):
     print("MQTT message received:", msg.topic, msg.payload)
     print("Inserting into DB:", DB_PATH)
     try:
-        store_message(msg.topic, msg.payload)
+        with app.app_context():
+            store_message(msg.topic, msg.payload)
     except Exception as e:
-        print('store error', e)
+        print('store error', e, file=sys.stderr)
     print("DB insert attempted")
 
 
@@ -108,7 +113,7 @@ def mqtt_worker():
             client.connect(MQTT_BROKER, MQTT_PORT)
             client.loop_forever()
         except Exception as e:
-            print('mqtt error', e)
+            print('mqtt error', e, file=sys.stderr)
             time.sleep(5)
 
 def parse_time(s):
