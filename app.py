@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """MQTTPlot - app.py"""
-import sys, os, io, json, time, threading, sqlite3
+import sys, os, io, json, time, threading, sqlite3, eventlet
 from datetime import datetime
 from flask import Flask, g, jsonify, request, render_template_string, send_file
 from flask_socketio import SocketIO
 import paho.mqtt.client as mqtt
 import plotly.graph_objects as go
 
+eventlet.monkey_patch()
+
 # Register adapter and converter for datetime
 sqlite3.register_adapter(datetime, lambda val: val.isoformat(sep=' '))
-sqlite3.register_converter("timestamp", lambda val: datetime.fromisoformat(val.decode()))
+sqlite3.register_converter("TIMESTAMP", lambda val: datetime.fromisoformat(val.decode()))
 
 DB_PATH = os.environ.get('DB_PATH','/opt/mqttplot/mqtt_data.db')
 MQTT_BROKER = os.environ.get('MQTT_BROKER','192.168.12.50')
@@ -27,10 +29,13 @@ socketio = SocketIO(app, cors_allowed_origins='*', async_mode='eventlet')
 def get_db():
     db = getattr(g,'_database',None)
     if db is None:
-        db = sqlite3.connect(DB_PATH, detect_types=sqlite3.PARSE_DECLTYPES)
+        db = sqlite3.connect(DB_PATH, 
+                             detect_types=sqlite3.PARSE_DECLTYPES |
+                             sqlite3.PARSE_COLNAMES)
         db.row_factory = sqlite3.Row
         g._database = db
     return db
+
 
 @app.teardown_appcontext
 def close_db(exc):
@@ -71,15 +76,28 @@ def parse_value(payload_text):
     except:
         return None
 
-def store_message(topic,payload):
+def store_message(topic, payload):
     payload_text = payload.decode(errors='replace')
     value = parse_value(payload_text)
+
     db = get_db()
-    db.execute('INSERT INTO messages(topic, ts, payload, value) VALUES (?, ?, ?, ?)',
-               (topic, datetime.now(), payload_text, value))
+    ts = datetime.now()
+    
+    db.execute(
+        'INSERT INTO messages(topic, ts, payload, value) VALUES (?, ?, ?, ?)',
+        (topic, ts, payload_text, value)
+    )
     db.commit()
+
     if value is not None:
-        socketio.emit('new_data', {'topic':topic, 'ts': datetime.now().isoformat(), 'value': value})
+        socketio.emit(
+            'new_data',
+            {
+                'topic': topic,
+                'ts': ts.isoformat(sep=' '),
+                'value': value
+            }
+        )
 
 def on_connect(client, userdata, flags, rc, properties=None):
     if rc==0:
@@ -93,13 +111,12 @@ def on_connect(client, userdata, flags, rc, properties=None):
 
 def on_message(client, userdata, msg):
     print("MQTT message received:", msg.topic, msg.payload)
-    print("Inserting into DB:", DB_PATH)
     try:
         with app.app_context():
             store_message(msg.topic, msg.payload)
     except Exception as e:
         print('store error', e, file=sys.stderr)
-    print("DB insert attempted")
+
 
 
 def mqtt_worker():
@@ -238,7 +255,6 @@ def viewer():
 
     rows = cursor.fetchall()
 
-    cursor.execute
 
 from flask import render_template_string
 @app.route('/')
