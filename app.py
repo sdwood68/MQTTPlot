@@ -7,12 +7,12 @@ from flask_socketio import SocketIO
 import paho.mqtt.client as mqtt
 import plotly.graph_objects as go
 
-MQTT_BROKER = os.environ.get('MQTT_BROKER','localhost')
+DB_PATH = os.environ.get('DB_PATH','/opt/mqttplot/mqtt_data.db')
+MQTT_BROKER = os.environ.get('MQTT_BROKER','192.168.12.50')
 MQTT_PORT = int(os.environ.get('MQTT_PORT','1883'))
 MQTT_TOPICS = os.environ.get('MQTT_TOPICS','#')
-MQTT_USERNAME = os.environ.get('MQTT_USERNAME','')
-MQTT_PASSWORD = os.environ.get('MQTT_PASSWORD','')
-DB_PATH = os.environ.get('DB_PATH','mqtt_data.db')
+MQTT_USERNAME = os.environ.get('MQTT_USERNAME')
+MQTT_PASSWORD = os.environ.get('MQTT_PASSWORD')
 FLASK_PORT = int(os.environ.get('FLASK_PORT','5000'))
 
 PLOT_CONFIG = {'default_window_minutes':60,'max_points':10000,'update_interval_ms':2000}
@@ -88,10 +88,14 @@ def on_connect(client, userdata, flags, rc, properties=None):
         print('MQTT connect rc', rc)
 
 def on_message(client, userdata, msg):
+    print("MQTT message received:", msg.topic, msg.payload)
+    print("Inserting into DB:", DB_PATH)
     try:
         store_message(msg.topic, msg.payload)
     except Exception as e:
         print('store error', e)
+    print("DB insert attempted")
+
 
 def mqtt_worker():
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)

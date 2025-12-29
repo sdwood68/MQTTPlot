@@ -11,7 +11,7 @@ INSTALL_DIR = "/opt/mqttplot"
 DB_PATH = os.path.join(INSTALL_DIR, "mqtt_data.db")
 SECRET_FILE = os.path.join(INSTALL_DIR, "secret.env")
 
-TEST_TOPIC = "mqttplot/test"
+TEST_TOPIC = "watergauge/test"
 TEST_VALUE = 123.456
 
 MQTT_BROKER = os.environ.get("MQTT_BROKER", "localhost")
