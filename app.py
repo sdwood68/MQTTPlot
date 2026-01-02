@@ -2,15 +2,15 @@
 """MQTTPlot - app.py"""
 import eventlet
 eventlet.monkey_patch()
-import sys, os, io, json, time, threading, sqlite3
+import sys, os, io, json, time, threading, sqlite3, logging
 from datetime import datetime
-from flask import Flask, g, jsonify, request, render_template_string, send_file
+from flask import Flask, g, jsonify, request, render_template, send_file
+from flask import session, redirect, abort, url_for
 from flask_socketio import SocketIO
 import paho.mqtt.client as mqtt
 import plotly.graph_objects as go
 from version import __version__
 from werkzeug.security import generate_password_hash, check_password_hash
-from flask import session, redirect, abort, url_for
 import secrets
 
 
@@ -320,230 +320,6 @@ def api_plot_image():
         return jsonify({'error':'image generation failed','detail':str(e)}),500
     buf.seek(0); return send_file(buf, mimetype='image/png')
 
-INDEX_HTML = r"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8"/>
-<title>MQTTPlot</title>
-
-<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
-<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-
-<style>
-body {
-    font-family: sans-serif;
-    margin: 20px;
-    max-width: 1000px;
-}
-input, button {
-    margin: 4px;
-    padding: 4px;
-}
-#plot {
-    width: 100%;
-    height: 500px;
-}
-.topic {
-    cursor: pointer;
-    color: blue;
-    text-decoration: underline;
-}
-.topic-row {
-    border-bottom: 1px solid #ddd;
-    padding: 6px;
-}
-.admin {
-    background: #f7f7f7;
-    padding: 10px;
-    border: 1px solid #ccc;
-    margin-top: 15px;
-}
-</style>
-</head>
-
-<body>
-
-<h2>MQTTPlot</h2>
-<p><b>Broker:</b> {{ broker }}</p>
-
-{% if admin %}
-<div class="admin">
-<b>Admin Mode Enabled</b>
-</div>
-{% endif %}
-
-<h3>Topics</h3>
-<div id="topics"></div>
-
-<h3>Plot Data</h3>
-<label>Topic:
-<input id="topicInput" list="topiclist">
-</label>
-<label>From:
-<input id="start">
-</label>
-<label>To:
-<input id="end">
-</label>
-<button onclick="plot()">Plot</button>
-
-<datalist id="topiclist"></datalist>
-<div id="plot"></div>
-
-{% if admin %}
-<div class="admin">
-<h3>OTA Control</h3>
-<input id="otaBase" placeholder="Base topic (e.g. watergauge)">
-<button onclick="sendOTA(1)">Enter OTA</button>
-<button onclick="sendOTA(0)">Exit OTA</button>
-</div>
-{% endif %}
-
-<script>
-const socket = io();
-const adminMode = {{ 'true' if admin else 'false' }};
-let currentTopic = null;
-
-/* Live updates */
-socket.on("new_data", msg => {
-    if (currentTopic && msg.topic === currentTopic) {
-        Plotly.extendTraces(
-            'plot',
-            { x: [[msg.ts]], y: [[msg.value]] },
-            [0]
-        );
-    }
-});
-
-/* Load topic list */
-async function loadTopics() {
-    const res = await fetch('/api/topics');
-    const data = await res.json();
-
-    const div = document.getElementById('topics');
-    const list = document.getElementById('topiclist');
-    div.innerHTML = '';
-    list.innerHTML = '';
-
-    data.forEach(t => {
-        const row = document.createElement('div');
-        row.className = 'topic-row';
-
-        const label = document.createElement('span');
-        label.className = 'topic';
-        label.textContent = t.topic;
-        label.onclick = () => {
-            document.getElementById('topicInput').value = t.topic;
-            plot();
-        };
-
-        row.appendChild(label);
-        row.appendChild(document.createTextNode(` — ${t.count} msgs `));
-
-        if (adminMode) {
-            /* Visibility toggle */
-            const chk = document.createElement('input');
-            chk.type = 'checkbox';
-            chk.checked = t.public !== 0;
-            chk.title = 'Publicly visible';
-            chk.onchange = async () => {
-                await fetch('/api/admin/topic_visibility', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        topic: t.topic,
-                        public: chk.checked
-                    })
-                });
-            };
-            row.appendChild(chk);
-
-            /* Delete button */
-            const del = document.createElement('button');
-            del.textContent = 'Delete';
-            del.onclick = async () => {
-                if (!confirm(`Delete ALL data for topic "${t.topic}"?`)) return;
-                await fetch(`/api/admin/topic/${encodeURIComponent(t.topic)}`, {
-                    method: 'DELETE'
-                });
-                loadTopics();
-            };
-            row.appendChild(del);
-        }
-
-        div.appendChild(row);
-
-        const opt = document.createElement('option');
-        opt.value = t.topic;
-        list.appendChild(opt);
-    });
-}
-
-/* Plot data */
-async function plot() {
-    const topic = document.getElementById('topicInput').value;
-    if (!topic) {
-        alert('Enter topic');
-        return;
-    }
-    currentTopic = topic;
-
-    const start = document.getElementById('start').value;
-    const end = document.getElementById('end').value;
-
-    let url = `/api/data?topic=${encodeURIComponent(topic)}`;
-    if (start) url += `&start=${encodeURIComponent(start)}`;
-    if (end) url += `&end=${encodeURIComponent(end)}`;
-
-    const res = await fetch(url);
-    const js = await res.json();
-
-    if (!js.length) {
-        document.getElementById('plot').innerHTML = 'No numeric data';
-        return;
-    }
-
-    const trace = {
-        x: js.map(r => r.ts),
-        y: js.map(r => r.value),
-        mode: 'lines+markers',
-        name: topic
-    };
-
-    Plotly.newPlot('plot', [trace], {
-        title: topic,
-        xaxis: { title: 'Time' },
-        yaxis: { title: 'Value' }
-    });
-}
-
-/* OTA */
-async function sendOTA(val) {
-    const base = document.getElementById('otaBase').value;
-    if (!base) {
-        alert('Enter base topic');
-        return;
-    }
-    await fetch('/api/admin/ota', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-            base_topic: base,
-            ota: val
-        })
-    });
-    alert('OTA command sent');
-}
-
-loadTopics();
-setInterval(loadTopics, 10000);
-</script>
-
-</body>
-</html>
-"""
-
-
 @app.route('/viewer')
 def viewer():
     conn = get_db()
@@ -618,8 +394,8 @@ def admin_logout():
 
 @app.route('/')
 def index():
-    return render_template_string(
-        INDEX_HTML,
+    return render_template(
+        "index.html",
         broker=f"{MQTT_BROKER}:{MQTT_PORT}",
         admin=is_admin(),
         admin_user=session.get("admin_user")
@@ -690,6 +466,23 @@ def admin_topic_visibility():
 
 
 def main():
+    # --- Startup / environment verification ---
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+    )
+
+    logging.info("MQTTPlot starting — version %s", __version__)
+    logging.info("Python executable: %s", sys.executable)
+    logging.info("Python prefix: %s", sys.prefix)
+    logging.info("Working directory: %s", os.getcwd())
+
+    # Optional hard guard to prevent wrong interpreter usage
+    if not sys.executable.startswith("/opt/mqttplot/venv/"):
+        logging.critical("NOT running inside mqttplot virtualenv — aborting")
+        sys.exit(1)
+
+
     init_db()
     record_app_version(__version__)
     init_admin_user()
