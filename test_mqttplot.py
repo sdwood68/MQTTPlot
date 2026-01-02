@@ -7,6 +7,16 @@ import json
 import requests
 import paho.mqtt.client as mqtt
 import sys
+import importlib.util
+
+spec = importlib.util.spec_from_file_location(
+    "version", "/opt/mqttplot/version.py"
+)
+version = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(version)
+
+print(f"🔢 MQTTPlot version detected: {version.__version__}")
+
 
 INSTALL_DIR = "/opt/mqttplot"
 DB_PATH = os.path.join(INSTALL_DIR, "mqtt_data.db")

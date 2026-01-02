@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """MQTTPlot - app.py"""
-import sys, os, io, json, time, threading, sqlite3, eventlet
+import eventlet
+eventlet.monkey_patch()
+import sys, os, io, json, time, threading, sqlite3
 from datetime import datetime
 from flask import Flask, g, jsonify, request, render_template_string, send_file
 from flask_socketio import SocketIO
 import paho.mqtt.client as mqtt
 import plotly.graph_objects as go
+from version import __version__
+from werkzeug.security import generate_password_hash, check_password_hash
+from flask import session, redirect, abort, url_for
+import secrets
 
-eventlet.monkey_patch()
 
 # Register adapter and converter for datetime
 sqlite3.register_adapter(datetime, lambda val: val.isoformat(sep=' '))
@@ -24,7 +29,15 @@ FLASK_PORT = int(os.environ.get('FLASK_PORT','5000'))
 PLOT_CONFIG = {'default_window_minutes':60,'max_points':10000,'update_interval_ms':2000}
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", secrets.token_hex(32))
 socketio = SocketIO(app, cors_allowed_origins='*', async_mode='eventlet')
+
+print(f"MQTTPlot starting — version {__version__}")
+
+
+def require_admin():
+    if not is_admin():
+        abort(403)
 
 def get_db():
     db = getattr(g,'_database',None)
@@ -36,6 +49,58 @@ def get_db():
         g._database = db
     return db
 
+def record_app_version(version: str):
+    db = sqlite3.connect(DB_PATH)
+    try:
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+        """)
+        db.execute("""
+            INSERT INTO metadata (key, value)
+            VALUES ('app_version', ?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value
+        """, (version,))
+        db.commit()
+    finally:
+        db.close()
+
+def init_admin_user():
+    db = sqlite3.connect(DB_PATH)
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS admin_users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            created_ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cur = db.execute("SELECT COUNT(*) FROM admin_users")
+    count = cur.fetchone()[0]
+
+    if count == 0:
+        # default admin user (must change password later)
+        db.execute(
+            "INSERT INTO admin_users (username, password_hash) VALUES (?, ?)",
+            ("admin", generate_password_hash("admin"))
+        )
+        print("⚠️  Default admin user created: admin / admin")
+
+    db.commit()
+    db.close()
+
+# def init_visibility():
+#     db = sqlite3.connect(DB_PATH)
+#     db.execute("""
+#         CREATE TABLE IF NOT EXISTS topic_visibility (
+#             topic TEXT PRIMARY KEY,
+#             public INTEGER NOT NULL DEFAULT 1
+#         )
+#     """)
+#     db.commit()
+#     db.close()
 
 @app.teardown_appcontext
 def close_db(exc):
@@ -46,16 +111,28 @@ def close_db(exc):
 def init_db():
     db = sqlite3.connect(DB_PATH)
     c = db.cursor()
-    c.execute("""CREATE TABLE IF NOT EXISTS messages (
+
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         topic TEXT NOT NULL,
         ts TIMESTAMP NOT NULL,
         payload TEXT,
         value REAL
-    )""")
-    c.execute("""CREATE INDEX IF NOT EXISTS idx_topic_ts ON messages(topic, ts)""")
+    )
+    """)
+
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS topic_meta (
+        topic TEXT PRIMARY KEY,
+        public INTEGER DEFAULT 1
+    )
+    """)
+
+    c.execute("CREATE INDEX IF NOT EXISTS idx_topic_ts ON messages(topic, ts)")
     db.commit()
     db.close()
+
 
 def parse_value(payload_text):
     try:
@@ -117,7 +194,8 @@ def on_message(client, userdata, msg):
     except Exception as e:
         print('store error', e, file=sys.stderr)
 
-
+def is_admin():
+    return session.get("is_admin", False)
 
 def mqtt_worker():
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
@@ -156,10 +234,25 @@ def api_set_config():
             PLOT_CONFIG[k] = data[k]
     return jsonify({'status':'ok','config':PLOT_CONFIG})
 
-@app.route('/api/topics', methods=['GET'])
+@app.route('/api/topics')
 def api_topics():
+    admin = is_admin()
     db = get_db()
-    cur = db.execute('SELECT topic, COUNT(*) as count FROM messages GROUP BY topic ORDER BY count DESC')
+
+    sql = """
+    SELECT m.topic,
+           COUNT(*) AS count,
+           COALESCE(t.public, 1) AS public
+    FROM messages m
+    LEFT JOIN topic_meta t ON m.topic = t.topic
+    """
+
+    if not admin:
+        sql += " WHERE COALESCE(t.public,1)=1"
+
+    sql += " GROUP BY m.topic ORDER BY count DESC"
+
+    cur = db.execute(sql)
     return jsonify([dict(r) for r in cur.fetchall()])
 
 @app.route('/api/data', methods=['GET'])
@@ -167,6 +260,18 @@ def api_data():
     topic = request.args.get('topic')
     if not topic:
         return jsonify({'error':'missing topic'}),400
+    
+    db = get_db()
+
+    if not is_admin():
+        cur = db.execute(
+            "SELECT COALESCE(public,1) FROM topic_meta WHERE topic=?",
+            (topic,)
+        )
+        row = cur.fetchone()
+        if row and row[0] == 0:
+            return jsonify({'error': 'topic not public'}), 403
+
     start = request.args.get('start')
     end = request.args.get('end')
     limit = int(request.args.get('limit', PLOT_CONFIG['max_points']))
@@ -187,6 +292,9 @@ def api_data():
 @app.route('/api/plot_image', methods=['GET'])
 def api_plot_image():
     topic = request.args.get('topic'); 
+    if not topic:
+        return jsonify({'error':'missing topic'}),400
+
     if not topic: return jsonify({'error':'missing topic'}),400
     start = request.args.get('start'); end = request.args.get('end')
     width = int(request.args.get('width',800)); height = int(request.args.get('height',500))
@@ -213,21 +321,228 @@ def api_plot_image():
     buf.seek(0); return send_file(buf, mimetype='image/png')
 
 INDEX_HTML = r"""<!doctype html>
-<html><head><meta charset="utf-8"/><title>MQTTPlot</title>
-<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script><script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-<style>body{font-family:sans-serif;margin:20px;max-width:900px}input,button{margin:3px;padding:4px}#plot{width:100%;height:500px}.topic{cursor:pointer;color:blue;text-decoration:underline}</style>
-</head><body>
-<h2>MQTTPlot</h2><p><b>Broker:</b> {{ broker }}</p><div id="topics"></div>
-<h3>Plot Data</h3><label>Topic:<input id="topicInput" list="topiclist"></label><label>From:<input id="start"></label><label>To:<input id="end"></label>
-<button onclick="plot()">Plot</button><datalist id="topiclist"></datalist><div id="plot"></div>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>MQTTPlot</title>
+
+<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
+<style>
+body {
+    font-family: sans-serif;
+    margin: 20px;
+    max-width: 1000px;
+}
+input, button {
+    margin: 4px;
+    padding: 4px;
+}
+#plot {
+    width: 100%;
+    height: 500px;
+}
+.topic {
+    cursor: pointer;
+    color: blue;
+    text-decoration: underline;
+}
+.topic-row {
+    border-bottom: 1px solid #ddd;
+    padding: 6px;
+}
+.admin {
+    background: #f7f7f7;
+    padding: 10px;
+    border: 1px solid #ccc;
+    margin-top: 15px;
+}
+</style>
+</head>
+
+<body>
+
+<h2>MQTTPlot</h2>
+<p><b>Broker:</b> {{ broker }}</p>
+
+{% if admin %}
+<div class="admin">
+<b>Admin Mode Enabled</b>
+</div>
+{% endif %}
+
+<h3>Topics</h3>
+<div id="topics"></div>
+
+<h3>Plot Data</h3>
+<label>Topic:
+<input id="topicInput" list="topiclist">
+</label>
+<label>From:
+<input id="start">
+</label>
+<label>To:
+<input id="end">
+</label>
+<button onclick="plot()">Plot</button>
+
+<datalist id="topiclist"></datalist>
+<div id="plot"></div>
+
+{% if admin %}
+<div class="admin">
+<h3>OTA Control</h3>
+<input id="otaBase" placeholder="Base topic (e.g. watergauge)">
+<button onclick="sendOTA(1)">Enter OTA</button>
+<button onclick="sendOTA(0)">Exit OTA</button>
+</div>
+{% endif %}
+
 <script>
 const socket = io();
-socket.on("new_data", msg=>{ if(currentTopic && msg.topic===currentTopic){ Plotly.extendTraces('plot',{y:[[msg.value]],x:[[msg.ts]]},[0]); }});
-let currentTopic=null;
-async function loadTopics(){ const res=await fetch('/api/topics'); const data=await res.json(); const div=document.getElementById('topics'); const list=document.getElementById('topiclist'); div.innerHTML=''; list.innerHTML=''; data.forEach(t=>{ const d=document.createElement('div'); d.innerHTML=`<span class="topic">${t.topic}</span> — ${t.count} msgs`; d.onclick=()=>{document.getElementById('topicInput').value=t.topic;plot();}; div.appendChild(d); const opt=document.createElement('option'); opt.value=t.topic; list.appendChild(opt); }); }
-async function plot(){ const topic=document.getElementById('topicInput').value; if(!topic)return alert('Enter topic'); currentTopic=topic; const start=document.getElementById('start').value; const end=document.getElementById('end').value; let url=`/api/data?topic=${encodeURIComponent(topic)}`; if(start)url+=`&start=${encodeURIComponent(start)}`; if(end)url+=`&end=${encodeURIComponent(end)}`; const res=await fetch(url); const js=await res.json(); if(!js.length){document.getElementById('plot').innerHTML='No numeric data';return;} const trace={x:js.map(r=>r.ts),y:js.map(r=>r.value),mode:'lines+markers',name:topic}; const layout={title:topic,xaxis:{title:'Time'},yaxis:{title:'Value'}}; Plotly.newPlot('plot',[trace],layout); }
-loadTopics(); setInterval(loadTopics,10000);
-</script></body></html>"""
+const adminMode = {{ 'true' if admin else 'false' }};
+let currentTopic = null;
+
+/* Live updates */
+socket.on("new_data", msg => {
+    if (currentTopic && msg.topic === currentTopic) {
+        Plotly.extendTraces(
+            'plot',
+            { x: [[msg.ts]], y: [[msg.value]] },
+            [0]
+        );
+    }
+});
+
+/* Load topic list */
+async function loadTopics() {
+    const res = await fetch('/api/topics');
+    const data = await res.json();
+
+    const div = document.getElementById('topics');
+    const list = document.getElementById('topiclist');
+    div.innerHTML = '';
+    list.innerHTML = '';
+
+    data.forEach(t => {
+        const row = document.createElement('div');
+        row.className = 'topic-row';
+
+        const label = document.createElement('span');
+        label.className = 'topic';
+        label.textContent = t.topic;
+        label.onclick = () => {
+            document.getElementById('topicInput').value = t.topic;
+            plot();
+        };
+
+        row.appendChild(label);
+        row.appendChild(document.createTextNode(` — ${t.count} msgs `));
+
+        if (adminMode) {
+            /* Visibility toggle */
+            const chk = document.createElement('input');
+            chk.type = 'checkbox';
+            chk.checked = t.public !== 0;
+            chk.title = 'Publicly visible';
+            chk.onchange = async () => {
+                await fetch('/api/admin/topic_visibility', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        topic: t.topic,
+                        public: chk.checked
+                    })
+                });
+            };
+            row.appendChild(chk);
+
+            /* Delete button */
+            const del = document.createElement('button');
+            del.textContent = 'Delete';
+            del.onclick = async () => {
+                if (!confirm(`Delete ALL data for topic "${t.topic}"?`)) return;
+                await fetch(`/api/admin/topic/${encodeURIComponent(t.topic)}`, {
+                    method: 'DELETE'
+                });
+                loadTopics();
+            };
+            row.appendChild(del);
+        }
+
+        div.appendChild(row);
+
+        const opt = document.createElement('option');
+        opt.value = t.topic;
+        list.appendChild(opt);
+    });
+}
+
+/* Plot data */
+async function plot() {
+    const topic = document.getElementById('topicInput').value;
+    if (!topic) {
+        alert('Enter topic');
+        return;
+    }
+    currentTopic = topic;
+
+    const start = document.getElementById('start').value;
+    const end = document.getElementById('end').value;
+
+    let url = `/api/data?topic=${encodeURIComponent(topic)}`;
+    if (start) url += `&start=${encodeURIComponent(start)}`;
+    if (end) url += `&end=${encodeURIComponent(end)}`;
+
+    const res = await fetch(url);
+    const js = await res.json();
+
+    if (!js.length) {
+        document.getElementById('plot').innerHTML = 'No numeric data';
+        return;
+    }
+
+    const trace = {
+        x: js.map(r => r.ts),
+        y: js.map(r => r.value),
+        mode: 'lines+markers',
+        name: topic
+    };
+
+    Plotly.newPlot('plot', [trace], {
+        title: topic,
+        xaxis: { title: 'Time' },
+        yaxis: { title: 'Value' }
+    });
+}
+
+/* OTA */
+async function sendOTA(val) {
+    const base = document.getElementById('otaBase').value;
+    if (!base) {
+        alert('Enter base topic');
+        return;
+    }
+    await fetch('/api/admin/ota', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            base_topic: base,
+            ota: val
+        })
+    });
+    alert('OTA command sent');
+}
+
+loadTopics();
+setInterval(loadTopics, 10000);
+</script>
+
+</body>
+</html>
+"""
+
 
 @app.route('/viewer')
 def viewer():
@@ -254,15 +569,130 @@ def viewer():
         """, (limit,))
 
     rows = cursor.fetchall()
+    return jsonify([dict(r) for r in rows])
 
 
-from flask import render_template_string
+@app.route("/api/version")
+def api_version():
+    db = sqlite3.connect(DB_PATH)
+    cur = db.cursor()
+    cur.execute("SELECT value FROM metadata WHERE key='app_version'")
+    row = cur.fetchone()
+    db.close()
+    return {"version": row[0] if row else "unknown"}
+
+@app.route("/admin/login", methods=["GET", "POST"])
+def admin_login_page():
+    if request.method == "POST":
+        username = request.form.get("username")
+        password = request.form.get("password")
+
+        db = sqlite3.connect(DB_PATH)
+        cur = db.execute(
+            "SELECT password_hash FROM admin_users WHERE username=?",
+            (username,)
+        )
+        row = cur.fetchone()
+        db.close()
+
+        if row and check_password_hash(row[0], password):
+            session["is_admin"] = True
+            session["admin_user"] = username
+            return redirect("/")
+
+        return "Invalid credentials", 401
+
+    return """
+    <h3>MQTTPlot Admin Login</h3>
+    <form method="post">
+        <input name="username" placeholder="Username"><br>
+        <input name="password" type="password" placeholder="Password"><br>
+        <button type="submit">Login</button>
+    </form>
+    """
+
+@app.route("/admin/logout")
+def admin_logout():
+    session.clear()
+    return redirect("/")
+
 @app.route('/')
 def index():
-    return render_template_string(INDEX_HTML, broker=f"{MQTT_BROKER}:{MQTT_PORT}")
+    return render_template_string(
+        INDEX_HTML,
+        broker=f"{MQTT_BROKER}:{MQTT_PORT}",
+        admin=is_admin(),
+        admin_user=session.get("admin_user")
+    )
+
+@app.route("/api/admin/topic/<path:topic>", methods=["DELETE"])
+def admin_delete_topic(topic):
+    require_admin()
+    if not is_admin():
+        return jsonify({"error": "admin required"}), 403
+
+    db = get_db()
+    cur = db.execute("DELETE FROM messages WHERE topic = ?", (topic,))
+    db.commit()
+
+    return jsonify({
+        "status": "ok",
+        "topic": topic,
+        "deleted_rows": cur.rowcount
+    })
+
+def publish_mqtt(topic, payload):
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    if MQTT_USERNAME:
+        client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
+    client.connect(MQTT_BROKER, MQTT_PORT, 60)
+    client.publish(topic, payload, qos=1, retain=False)
+    client.disconnect()
+
+@app.route("/api/admin/ota", methods=["POST"])
+def admin_ota():
+    require_admin()
+    if not is_admin():
+        return jsonify({"error": "admin required"}), 403
+
+    data = request.get_json(force=True)
+    base_topic = data.get("base_topic")
+    ota_value = data.get("ota")
+
+    if ota_value not in (0, 1):
+        return jsonify({"error": "ota must be 0 or 1"}), 400
+
+    ota_topic = f"{base_topic}/ota"
+    publish_mqtt(ota_topic, str(ota_value))
+
+    return jsonify({
+        "status": "ok",
+        "topic": ota_topic,
+        "value": ota_value
+    })
+
+@app.route('/api/admin/topic_visibility', methods=['POST'])
+def admin_topic_visibility():
+    require_admin()
+    data = request.get_json()
+    topic = data['topic']
+    public = 1 if data['public'] else 0
+
+    db = get_db()
+    db.execute("""
+    INSERT INTO topic_meta(topic, public)
+    VALUES (?,?)
+    ON CONFLICT(topic) DO UPDATE SET public=excluded.public
+    """, (topic, public))
+    db.commit()
+
+    return jsonify({'status': 'ok'})
+
 
 def main():
     init_db()
+    record_app_version(__version__)
+    init_admin_user()
     t = threading.Thread(target=mqtt_worker, daemon=True)
     t.start()
     socketio.run(app, host='0.0.0.0', port=FLASK_PORT)

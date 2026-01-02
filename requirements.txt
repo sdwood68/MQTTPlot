@@ -7,3 +7,4 @@ kaleido>=0.2  # for PNG export
 requests>=2.32
 paho-mqtt 
 waitress
+Werkzeug>=3.0
