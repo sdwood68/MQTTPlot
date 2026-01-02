@@ -376,16 +376,13 @@ def admin_login_page():
             session["admin_user"] = username
             return redirect("/")
 
-        return "Invalid credentials", 401
+        return render_template(
+            "admin_login.html",
+            error="Invalid username or password"
+        )
 
-    return """
-    <h3>MQTTPlot Admin Login</h3>
-    <form method="post">
-        <input name="username" placeholder="Username"><br>
-        <input name="password" type="password" placeholder="Password"><br>
-        <button type="submit">Login</button>
-    </form>
-    """
+    return render_template("admin_login.html")
+
 
 @app.route("/admin/logout")
 def admin_logout():
