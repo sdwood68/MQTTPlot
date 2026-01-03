@@ -1,5 +1,19 @@
-WaterGauge/
+# Archives
 *.zip
-*.venv
-*.git
 
+# Python virtual environment
+.venv/
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# VS Code (local editor config)
+.vscode/
+
+# Runtime data and databases
+data/*
+!data/.gitkeep
+
+# SQLite databases (extra safety)
+*.db

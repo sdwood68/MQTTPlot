@@ -19,6 +19,7 @@ sqlite3.register_adapter(datetime, lambda val: val.isoformat(sep=' '))
 sqlite3.register_converter("TIMESTAMP", lambda val: datetime.fromisoformat(val.decode()))
 
 DB_PATH = os.environ.get('DB_PATH','/opt/mqttplot/mqtt_data.db')
+DATA_DB_DIR = os.environ.get('DATA_DB_DIR','/opt/mqttplot/data')
 MQTT_BROKER = os.environ.get('MQTT_BROKER','192.168.12.50')
 MQTT_PORT = int(os.environ.get('MQTT_PORT','1883'))
 MQTT_TOPICS = os.environ.get('MQTT_TOPICS','#')
@@ -48,6 +49,73 @@ def get_db():
         db.row_factory = sqlite3.Row
         g._database = db
     return db
+
+def top_level_topic(topic: str) -> str:
+    """
+    Returns the top-level topic segment.
+    Examples:
+      "/watergauge/temp" -> "watergauge"
+      "watergauge/temp"  -> "watergauge"
+      "/" or ""          -> "_root"
+    """
+    if not topic:
+        return "_root"
+    t = topic.strip()
+    if t.startswith("/"):
+        t = t[1:]
+    if not t:
+        return "_root"
+    return t.split("/", 1)[0] or "_root"
+
+def data_db_path_for_topic(topic: str) -> str:
+    root = top_level_topic(topic)
+    os.makedirs(DATA_DB_DIR, exist_ok=True)
+    return os.path.join(DATA_DB_DIR, f"{root}.db")
+
+
+def init_data_db(db_path: str) -> None:
+    db = sqlite3.connect(db_path)
+    c = db.cursor()
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        topic TEXT NOT NULL,
+        ts TIMESTAMP NOT NULL,
+        payload TEXT,
+        value REAL
+    )
+    """)
+    c.execute("CREATE INDEX IF NOT EXISTS idx_topic_ts ON messages(topic, ts)")
+    db.commit()
+    db.close()
+
+
+def get_data_db(topic: str) -> sqlite3.Connection:
+    """
+    Opens (and initializes if needed) the per-top-level SQLite DB for the given topic.
+    """
+    path = data_db_path_for_topic(topic)
+    if not os.path.exists(path):
+        init_data_db(path)
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def update_topic_stats(topic: str, ts: datetime, value) -> None:
+    """
+    Maintain a lightweight index in the MAIN DB so /api/topics is fast without
+    scanning all per-topic databases.
+    """
+    db = get_db()
+    db.execute("""
+    INSERT INTO topic_stats(topic, top_level, count, first_ts, last_ts, last_value)
+    VALUES (?, ?, 1, ?, ?, ?)
+    ON CONFLICT(topic) DO UPDATE SET
+        count = count + 1,
+        last_ts = excluded.last_ts,
+        last_value = excluded.last_value
+    """, (topic, top_level_topic(topic), ts, ts, value))
+    db.commit()
 
 def record_app_version(version: str):
     db = sqlite3.connect(DB_PATH)
@@ -107,16 +175,8 @@ def init_db():
     db = sqlite3.connect(DB_PATH)
     c = db.cursor()
 
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS messages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        topic TEXT NOT NULL,
-        ts TIMESTAMP NOT NULL,
-        payload TEXT,
-        value REAL
-    )
-    """)
-
+    # Main DB no longer needs the big messages table for queries,
+    # but we keep topic_meta + add topic_stats for fast topic listing.
     c.execute("""
     CREATE TABLE IF NOT EXISTS topic_meta (
         topic TEXT PRIMARY KEY,
@@ -124,10 +184,24 @@ def init_db():
     )
     """)
 
-    c.execute("CREATE INDEX IF NOT EXISTS idx_topic_ts ON messages(topic, ts)")
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS topic_stats (
+        topic TEXT PRIMARY KEY,
+        top_level TEXT,
+        count INTEGER DEFAULT 0,
+        first_ts TIMESTAMP,
+        last_ts TIMESTAMP,
+        last_value REAL
+    )
+    """)
+
+    c.execute("CREATE INDEX IF NOT EXISTS idx_topic_stats_count ON topic_stats(count)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_topic_stats_top_level ON topic_stats(top_level)")
     db.commit()
     db.close()
 
+    # Ensure the data directory exists
+    os.makedirs(DATA_DB_DIR, exist_ok=True)
 
 def parse_value(payload_text):
     try:
@@ -152,21 +226,36 @@ def store_message(topic, payload):
     payload_text = payload.decode(errors='replace')
     value = parse_value(payload_text)
 
-    db = get_db()
     ts = datetime.now()
-    
-    db.execute(
+
+    # 1) Write actual time-series data into per-top-level DB
+    data_db = get_data_db(topic)
+    data_db.execute(
         'INSERT INTO messages(topic, ts, payload, value) VALUES (?, ?, ?, ?)',
         (topic, ts, payload_text, value)
     )
+    data_db.commit()
+    data_db.close()
+
+    # 2) Ensure topic exists in metadata (main DB)
+    #    (do not overwrite an existing visibility setting)
+    db = get_db()
+    db.execute(
+        "INSERT OR IGNORE INTO topic_meta(topic, public) VALUES (?, 1)",
+        (topic,)
+    )
     db.commit()
 
+    # 3) Update lightweight stats (main DB)
+    update_topic_stats(topic, ts, value)
+
+    # 4) Emit live update (use strict ISO 8601)
     if value is not None:
         socketio.emit(
             'new_data',
             {
                 'topic': topic,
-                'ts': ts.isoformat(sep=' '),
+                'ts': ts.isoformat(),   # IMPORTANT: ISO 8601 with "T"
                 'value': value
             }
         )
@@ -235,17 +324,17 @@ def api_topics():
     db = get_db()
 
     sql = """
-    SELECT m.topic,
-           COUNT(*) AS count,
-           COALESCE(t.public, 1) AS public
-    FROM messages m
-    LEFT JOIN topic_meta t ON m.topic = t.topic
+    SELECT s.topic,
+           s.count AS count,
+           COALESCE(m.public, 1) AS public
+    FROM topic_stats s
+    LEFT JOIN topic_meta m ON s.topic = m.topic
     """
 
     if not admin:
-        sql += " WHERE COALESCE(t.public,1)=1"
+        sql += " WHERE COALESCE(m.public,1)=1"
 
-    sql += " GROUP BY m.topic ORDER BY count DESC"
+    sql += " ORDER BY s.count DESC"
 
     cur = db.execute(sql)
     return jsonify([dict(r) for r in cur.fetchall()])
@@ -254,35 +343,46 @@ def api_topics():
 def api_data():
     topic = request.args.get('topic')
     if not topic:
-        return jsonify({'error':'missing topic'}),400
-    
-    db = get_db()
+        return jsonify({'error':'missing topic'}), 400
 
+    # Visibility check uses main DB
     if not is_admin():
+        db = get_db()
         cur = db.execute(
-            "SELECT COALESCE(public,1) FROM topic_meta WHERE topic=?",
+            "SELECT COALESCE(public,1) AS public FROM topic_meta WHERE topic=?",
             (topic,)
         )
         row = cur.fetchone()
-        if row and row[0] == 0:
+        if row and row["public"] == 0:
             return jsonify({'error': 'topic not public'}), 403
 
     start = request.args.get('start')
     end = request.args.get('end')
     limit = int(request.args.get('limit', PLOT_CONFIG['max_points']))
+
     sql = 'SELECT ts, value FROM messages WHERE topic=? AND value IS NOT NULL'
     params = [topic]
     if start:
-        sql += ' AND ts >= ?'; params.append(parse_time(start))
+        sql += ' AND ts >= ?'
+        params.append(parse_time(start))
     if end:
-        sql += ' AND ts <= ?'; params.append(parse_time(end))
-    sql += ' ORDER BY ts ASC LIMIT ?'; params.append(limit)
-    cur = get_db().execute(sql, params)
+        sql += ' AND ts <= ?'
+        params.append(parse_time(end))
+    sql += ' ORDER BY ts ASC LIMIT ?'
+    params.append(limit)
+
+    data_db = get_data_db(topic)
+    cur = data_db.execute(sql, params)
     rows = [{'ts': r['ts'], 'value': r['value']} for r in cur.fetchall()]
+    data_db.close()
+
+    # Normalize timestamps for JS (strict ISO 8601)
     for r in rows:
         if not isinstance(r['ts'], str):
-            r['ts'] = r['ts'].isoformat(sep=' ')
+            r['ts'] = r['ts'].isoformat()
+
     return jsonify(rows)
+
 
 @app.route('/api/plot_image', methods=['GET'])
 def api_plot_image():
@@ -314,6 +414,39 @@ def api_plot_image():
     except Exception as e:
         return jsonify({'error':'image generation failed','detail':str(e)}),500
     buf.seek(0); return send_file(buf, mimetype='image/png')
+
+@app.route('/api/bounds', methods=['GET'])
+def api_bounds():
+    topic = request.args.get('topic')
+    if not topic:
+        return jsonify({'error': 'missing topic'}), 400
+
+    # Same visibility rule as /api/data
+    if not is_admin():
+        db = get_db()
+        cur = db.execute(
+            "SELECT COALESCE(public,1) AS public FROM topic_meta WHERE topic=?",
+            (topic,)
+        )
+        row = cur.fetchone()
+        if row and row["public"] == 0:
+            return jsonify({'error': 'topic not public'}), 403
+
+    data_db = get_data_db(topic)
+    cur = data_db.execute(
+        "SELECT MIN(ts) AS min_ts, MAX(ts) AS max_ts FROM messages WHERE topic=? AND value IS NOT NULL",
+        (topic,)
+    )
+    row = cur.fetchone()
+    data_db.close()
+
+    if not row or (row["min_ts"] is None) or (row["max_ts"] is None):
+        return jsonify({'error': 'no data'}), 404
+
+    min_ts = row["min_ts"].isoformat() if not isinstance(row["min_ts"], str) else row["min_ts"]
+    max_ts = row["max_ts"].isoformat() if not isinstance(row["max_ts"], str) else row["max_ts"]
+
+    return jsonify({'min_ts': min_ts, 'max_ts': max_ts})
 
 @app.route('/viewer')
 def viewer():
@@ -399,8 +532,14 @@ def admin_delete_topic(topic):
     if not is_admin():
         return jsonify({"error": "admin required"}), 403
 
+    data_db = get_data_db(topic)
+    cur = data_db.execute("DELETE FROM messages WHERE topic = ?", (topic,))
+    data_db.commit()
+    data_db.close()
+
+    # Remove from topic_stats (main DB), keep topic_meta (visibility) unless you prefer to remove it too
     db = get_db()
-    cur = db.execute("DELETE FROM messages WHERE topic = ?", (topic,))
+    db.execute("DELETE FROM topic_stats WHERE topic = ?", (topic,))
     db.commit()
 
     return jsonify({
@@ -469,11 +608,23 @@ def main():
     logging.info("Python prefix: %s", sys.prefix)
     logging.info("Working directory: %s", os.getcwd())
 
-    # Optional hard guard to prevent wrong interpreter usage
-    if not sys.executable.startswith("/opt/mqttplot/venv/"):
-        logging.critical("NOT running inside mqttplot virtualenv — aborting")
-        sys.exit(1)
+    # Optional hard guard to prevent wrong interpreter usage (cross-platform)
+    expected_venv_prefix = os.environ.get("MQTTPLOT_VENV_PREFIX")
 
+    if expected_venv_prefix:
+        # Normalize slashes and case for Windows paths
+        exe = os.path.normcase(os.path.abspath(sys.executable))
+        expected = os.path.normcase(os.path.abspath(expected_venv_prefix))
+
+        if not exe.startswith(expected):
+            logging.critical(
+                "NOT running inside expected virtualenv — aborting. exe=%s expected_prefix=%s",
+                sys.executable, expected_venv_prefix
+            )
+            sys.exit(1)
+    else:
+        # No guard configured; allow normal development workflows
+        logging.info("MQTTPLOT_VENV_PREFIX not set — skipping interpreter guard")
 
     init_db()
     record_app_version(__version__)

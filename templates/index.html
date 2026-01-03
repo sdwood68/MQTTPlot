@@ -49,7 +49,16 @@
 <label>To:
 <input id="end" placeholder="ISO time or epoch (optional)">
 </label>
+
 <button onclick="plot()">Plot</button>
+
+<!-- v0.6.0 plot window controls -->
+<div style="margin-top: 8px;">
+  <button onclick="slideWindow(-0.5)">◀ Back 50%</button>
+  <button onclick="slideWindow(0.5)">Forward 50% ▶</button>
+  <button onclick="zoomWindow(0.5)">Zoom In</button>
+  <button onclick="zoomWindow(2.0)">Zoom Out</button>
+</div>
 
 <datalist id="topiclist"></datalist>
 <div id="plot"></div>
