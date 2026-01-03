@@ -97,7 +97,6 @@ def init_admin_user():
     db.commit()
     db.close()
 
-
 @app.teardown_appcontext
 def close_db(exc):
     db = getattr(g,'_database',None)

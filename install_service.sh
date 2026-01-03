@@ -57,7 +57,9 @@ fi
 
 # Copy everything from current directory into INSTALL_DIR
 # (This assumes you run the installer from your project directory)
-cp -a ./* "$INSTALL_DIR/"
+# cp -a ./* "$INSTALL_DIR/"
+rsync -a --delete ./ "$INSTALL_DIR"/
+
 
 # Restore DB if we preserved it
 if [[ -n "${TMP_DB:-}" ]]; then
@@ -173,58 +175,57 @@ pip install --upgrade pip
 pip install -r '$INSTALL_DIR/requirements.txt'
 "
 
-# --- Initialize DB schema (safe if CREATE TABLE IF NOT EXISTS) and set admin password ---
 echo "Initializing database schema and admin account..."
-sudo -u mqttplot bash -c "
+
+sudo -u mqttplot env \
+  ADMIN_INIT_PASSWORD="$ADMIN_PASS" \
+  DB_PATH="$DB_PATH" \
+  bash -c '
 set -e
-source '$INSTALL_DIR/venv/bin/activate'
-python3 - <<'PY'
+source "/opt/mqttplot/venv/bin/activate"
+python3 - <<'"'"'PY'"'"'
 import os, sqlite3
 from werkzeug.security import generate_password_hash
 
-db_path = os.environ.get('DB_PATH', '$DB_PATH')
-admin_pass = os.environ.get('ADMIN_INIT_PASSWORD')
+db_path = os.environ.get("DB_PATH", "/opt/mqttplot/mqtt_data.db")
+admin_pass = os.environ.get("ADMIN_INIT_PASSWORD")
 if not admin_pass:
-    raise SystemExit('ADMIN_INIT_PASSWORD not set')
+    raise SystemExit("ADMIN_INIT_PASSWORD not set")
 
 db = sqlite3.connect(db_path)
 c = db.cursor()
 
-# Core tables (match your app.py expectations)
-c.execute('''CREATE TABLE IF NOT EXISTS messages (
+c.execute("""CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     topic TEXT NOT NULL,
     ts TIMESTAMP NOT NULL,
     payload TEXT,
     value REAL
-)''')
-c.execute('''CREATE TABLE IF NOT EXISTS topic_meta (
+)""")
+c.execute("""CREATE TABLE IF NOT EXISTS topic_meta (
     topic TEXT PRIMARY KEY,
     public INTEGER DEFAULT 1
-)''')
-c.execute('CREATE INDEX IF NOT EXISTS idx_topic_ts ON messages(topic, ts)')
+)""")
+c.execute("CREATE INDEX IF NOT EXISTS idx_topic_ts ON messages(topic, ts)")
 
-# Admin users
-c.execute('''CREATE TABLE IF NOT EXISTS admin_users (
+c.execute("""CREATE TABLE IF NOT EXISTS admin_users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
     created_ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-)''')
+)""")
 
-# Create or update admin user password
 ph = generate_password_hash(admin_pass)
-c.execute('''INSERT INTO admin_users (username, password_hash)
-             VALUES ('admin', ?)
-             ON CONFLICT(username) DO UPDATE SET password_hash=excluded.password_hash''', (ph,))
+c.execute("""INSERT INTO admin_users (username, password_hash)
+             VALUES ("admin", ?)
+             ON CONFLICT(username) DO UPDATE SET password_hash=excluded.password_hash""", (ph,))
 
 db.commit()
 db.close()
-print('Admin user initialized/updated: admin')
+print("Admin user initialized/updated: admin")
 PY
-" ADMIN_INIT_PASSWORD="$ADMIN_PASS" DB_PATH="$DB_PATH"
+'
 
-unset ADMIN_PASS ADMIN_PASS_CONFIRM
 
 # --- Write systemd service file ---
 echo "Writing systemd service file..."
