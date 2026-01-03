@@ -1,43 +1,91 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 # --- Ensure script is run as root ---
 if [[ $EUID -ne 0 ]]; then
-    echo "Error: This installer must be run as root."
-    echo "Please run: sudo $0"
-    exit 1
+  echo "Error: This installer must be run as root."
+  echo "Please run: sudo $0"
+  exit 1
+fi
+
+RESET_DB=0
+if [[ "${1:-}" == "--reset-db" ]]; then
+  RESET_DB=1
 fi
 
 INSTALL_DIR="/opt/mqttplot"
 SERVICE_FILE="/etc/systemd/system/mqttplot.service"
 LOG_DIR="/var/log/mqttplot"
 SECRET_FILE="$INSTALL_DIR/secret.env"
-REQUIREMENTS_FILE="requirements.txt"
+
+DB_PATH="$INSTALL_DIR/mqtt_data.db"
+DB_BASENAME="$(basename "$DB_PATH")"
 
 echo "=== MQTTPlot Installer ==="
-
-# --- Check requirements.txt exists ---
-if [[ ! -f "$REQUIREMENTS_FILE" ]]; then
-    echo "Error: $REQUIREMENTS_FILE not found in current directory."
-    echo "Please ensure requirements.txt exists before running installer."
-    exit 1
-fi
+echo "RESET_DB=$RESET_DB"
 
 # --- Create system user ---
-echo "Creating system user 'mqttplot' with home at $INSTALL_DIR..."
+echo "Ensuring system user 'mqttplot' exists..."
 id -u mqttplot &>/dev/null || useradd -r -s /usr/sbin/nologin -d "$INSTALL_DIR" mqttplot
 
 # --- Create directories ---
 mkdir -p "$INSTALL_DIR" "$LOG_DIR"
+chown mqttplot:mqttplot "$INSTALL_DIR" "$LOG_DIR"
+chmod 755 "$INSTALL_DIR"
+chmod 755 "$LOG_DIR"
 
-# --- Copy project files ---
-echo "Copying project files..."
-cp -r ./* "$INSTALL_DIR"
+# --- Handle existing DB before copying files ---
+if [[ -f "$DB_PATH" ]]; then
+  if [[ $RESET_DB -eq 1 ]]; then
+    ts=$(date +%Y%m%d-%H%M%S)
+    echo "⚠️  --reset-db specified. Backing up and recreating DB."
+    cp -a "$DB_PATH" "$DB_PATH.bak-$ts"
+    rm -f "$DB_PATH"
+  else
+    echo "✅ Existing database detected: $DB_PATH (will preserve)"
+  fi
+fi
 
-# --- Set ownership and permissions ---
+# --- Copy project files WITHOUT overwriting preserved DB ---
+echo "Copying project files to $INSTALL_DIR ..."
+# If an old DB exists and we are not resetting, temporarily move it out of the way
+TMP_DB=""
+if [[ -f "$DB_PATH" && $RESET_DB -eq 0 ]]; then
+  TMP_DB="/tmp/${DB_BASENAME}.$$"
+  mv "$DB_PATH" "$TMP_DB"
+fi
+
+# Copy everything from current directory into INSTALL_DIR
+# (This assumes you run the installer from your project directory)
+cp -a ./* "$INSTALL_DIR/"
+
+# Restore DB if we preserved it
+if [[ -n "${TMP_DB:-}" ]]; then
+  mv "$TMP_DB" "$DB_PATH"
+fi
+
+# --- Validate requirements.txt exists in installed location ---
+if [[ ! -f "$INSTALL_DIR/requirements.txt" ]]; then
+  echo "Error: $INSTALL_DIR/requirements.txt not found after copy."
+  echo "Make sure requirements.txt exists in your project directory."
+  exit 1
+fi
+
+# --- Ensure DB exists (create if missing) ---
+if [[ ! -f "$DB_PATH" ]]; then
+  echo "Creating new database file: $DB_PATH"
+  install -o mqttplot -g mqttplot -m 664 /dev/null "$DB_PATH"
+else
+  chown mqttplot:mqttplot "$DB_PATH"
+  chmod 664 "$DB_PATH"
+fi
+
+# --- Ownership for app files (do NOT chmod everything recursively) ---
 chown -R mqttplot:mqttplot "$INSTALL_DIR"
-chmod -R 755 "$INSTALL_DIR"
 chown -R mqttplot:mqttplot "$LOG_DIR"
+
+# Ensure secret file permissions will be set later
+# (Do NOT chmod -R 755 the whole install dir)
 
 # --- Default values ---
 DEFAULT_MQTT_BROKER="192.168.12.50"
@@ -47,7 +95,22 @@ DEFAULT_MQTT_PASSWORD="NeverGetWet"
 DEFAULT_MQTT_TOPICS="watergauge/#"
 DEFAULT_FLASK_PORT="5000"
 
-# --- Prompt for settings ---
+echo
+echo "=== Admin Account Setup ==="
+while true; do
+  read -s -p "Enter initial admin password: " ADMIN_PASS
+  echo
+  read -s -p "Confirm admin password: " ADMIN_PASS_CONFIRM
+  echo
+  if [[ "$ADMIN_PASS" != "$ADMIN_PASS_CONFIRM" ]]; then
+    echo "Passwords do not match. Try again."
+  elif [[ -z "$ADMIN_PASS" ]]; then
+    echo "Password cannot be empty."
+  else
+    break
+  fi
+done
+
 read -rp "Enter MQTT broker IP [$DEFAULT_MQTT_BROKER]: " MQTT_BROKER
 MQTT_BROKER=${MQTT_BROKER:-$DEFAULT_MQTT_BROKER}
 
@@ -66,9 +129,7 @@ MQTT_TOPICS=${MQTT_TOPICS:-$DEFAULT_MQTT_TOPICS}
 read -rp "Enter Flask port [$DEFAULT_FLASK_PORT]: " FLASK_PORT
 FLASK_PORT=${FLASK_PORT:-$DEFAULT_FLASK_PORT}
 
-DB_PATH="$INSTALL_DIR/mqtt_data.db"
-
-# --- Show configuration for verification ---
+echo
 echo "=== Configuration ==="
 echo "MQTT_BROKER=$MQTT_BROKER"
 echo "MQTT_PORT=$MQTT_PORT"
@@ -97,19 +158,73 @@ EOF
 chown root:mqttplot "$SECRET_FILE"
 chmod 640 "$SECRET_FILE"
 
-# --- Create Python virtual environment ---
+# --- Create / recreate Python virtual environment ---
 echo "Creating Python virtual environment..."
+# If venv exists, keep it unless you want to force rebuild; simplest is rebuild:
+rm -rf "$INSTALL_DIR/venv"
 sudo -u mqttplot python3 -m venv "$INSTALL_DIR/venv"
 
 # --- Install Python packages from requirements.txt ---
 echo "Installing Python packages from requirements.txt..."
-sudo -u mqttplot bash <<EOF
+sudo -u mqttplot bash -c "
 set -e
-source "$INSTALL_DIR/venv/bin/activate"
+source '$INSTALL_DIR/venv/bin/activate'
 pip install --upgrade pip
-pip install -r "$INSTALL_DIR/requirements.txt"
-deactivate
-EOF
+pip install -r '$INSTALL_DIR/requirements.txt'
+"
+
+# --- Initialize DB schema (safe if CREATE TABLE IF NOT EXISTS) and set admin password ---
+echo "Initializing database schema and admin account..."
+sudo -u mqttplot bash -c "
+set -e
+source '$INSTALL_DIR/venv/bin/activate'
+python3 - <<'PY'
+import os, sqlite3
+from werkzeug.security import generate_password_hash
+
+db_path = os.environ.get('DB_PATH', '$DB_PATH')
+admin_pass = os.environ.get('ADMIN_INIT_PASSWORD')
+if not admin_pass:
+    raise SystemExit('ADMIN_INIT_PASSWORD not set')
+
+db = sqlite3.connect(db_path)
+c = db.cursor()
+
+# Core tables (match your app.py expectations)
+c.execute('''CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic TEXT NOT NULL,
+    ts TIMESTAMP NOT NULL,
+    payload TEXT,
+    value REAL
+)''')
+c.execute('''CREATE TABLE IF NOT EXISTS topic_meta (
+    topic TEXT PRIMARY KEY,
+    public INTEGER DEFAULT 1
+)''')
+c.execute('CREATE INDEX IF NOT EXISTS idx_topic_ts ON messages(topic, ts)')
+
+# Admin users
+c.execute('''CREATE TABLE IF NOT EXISTS admin_users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)''')
+
+# Create or update admin user password
+ph = generate_password_hash(admin_pass)
+c.execute('''INSERT INTO admin_users (username, password_hash)
+             VALUES ('admin', ?)
+             ON CONFLICT(username) DO UPDATE SET password_hash=excluded.password_hash''', (ph,))
+
+db.commit()
+db.close()
+print('Admin user initialized/updated: admin')
+PY
+" ADMIN_INIT_PASSWORD="$ADMIN_PASS" DB_PATH="$DB_PATH"
+
+unset ADMIN_PASS ADMIN_PASS_CONFIRM
 
 # --- Write systemd service file ---
 echo "Writing systemd service file..."
@@ -132,7 +247,6 @@ StandardError=append:$LOG_DIR/mqttplot.log
 WantedBy=multi-user.target
 EOF
 
-# --- Enable and start service ---
 echo "Reloading systemd and starting MQTTPlot service..."
 systemctl daemon-reload
 systemctl enable mqttplot

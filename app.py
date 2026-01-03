@@ -77,30 +77,26 @@ def init_admin_user():
             created_ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+
     cur = db.execute("SELECT COUNT(*) FROM admin_users")
     count = cur.fetchone()[0]
 
     if count == 0:
-        # default admin user (must change password later)
+        password = os.environ.get("ADMIN_INIT_PASSWORD")
+        if not password:
+            raise RuntimeError(
+                "ADMIN_INIT_PASSWORD not set during first initialization"
+            )
+
         db.execute(
             "INSERT INTO admin_users (username, password_hash) VALUES (?, ?)",
-            ("admin", generate_password_hash("admin"))
+            ("admin", generate_password_hash(password))
         )
-        print("⚠️  Default admin user created: admin / admin")
+        print("✔ Admin user created")
 
     db.commit()
     db.close()
 
-# def init_visibility():
-#     db = sqlite3.connect(DB_PATH)
-#     db.execute("""
-#         CREATE TABLE IF NOT EXISTS topic_visibility (
-#             topic TEXT PRIMARY KEY,
-#             public INTEGER NOT NULL DEFAULT 1
-#         )
-#     """)
-#     db.commit()
-#     db.close()
 
 @app.teardown_appcontext
 def close_db(exc):
