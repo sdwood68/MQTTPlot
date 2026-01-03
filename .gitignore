@@ -1,3 +1,5 @@
 WaterGauge/
 *.zip
-.venv/
+*.venv
+*.git
+
