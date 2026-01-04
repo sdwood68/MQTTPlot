@@ -1,16 +1,14 @@
-# 🧠 MQTTPlot  
+# MQTTPlot
+
+MQTTPlot is a lightweight, self-hosted web application for visualizing time-series data published to MQTT topics. It is designed for local monitoring, experimentation, and embedded/IoT projects where a full metrics stack would be
+overkill.
+
 **MQTT → SQLite → Flask + SocketIO + Plotly Dashboard**
 
----
-
-## 📘 Overview
-**MQTTPlot** is a lightweight Python project that listens to data from an MQTT broker, stores it in a local SQLite database, and provides both:
+**MQTTPlot** provides both:
 - A **real-time web dashboard** (using Flask, Socket.IO, and Plotly)
 - A **RESTful API** for querying, configuring, and exporting plots (PNG/JSON)
 
-Ideal for IoT, sensor networks, and data visualization.
-
----
 
 ## 🚀 Features
 ✅ Subscribe to MQTT topics (configurable via environment variables)  
@@ -27,11 +25,134 @@ Ideal for IoT, sensor networks, and data visualization.
 - MQTT broker (e.g., Mosquitto)
 - Optional: Docker for containerized deployment
 
-### Python dependencies
-Installed automatically via:
-```bash
+---
+
+## Quick Start (5 minutes)
+
+### Windows (PowerShell)
+```powershell
+git clone https://github.com/sdwood68/MQTTPlot.git
+cd MQTTPlot
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+
+$env:DB_PATH="data\mqttplot_main.db"
+$env:DATA_DB_DIR="data\topics"
+$env:MQTT_BROKER="<mqtt-broker-ip>"
+mkdir data\topics
+
+$env:ADMIN_INIT_PASSWORD="ChangeMeNow!"
+python app.py
+Remove-Item Env:\ADMIN_INIT_PASSWORD
 ```
+
+Open: http://localhost:5000
+
+## Linux / macOS
+```
+git clone https://github.com/sdwood68/MQTTPlot.git
+cd MQTTPlot
+python3 -m venv .venv
+source .venv/bin/activate
+pip install flask flask-socketio paho-mqtt
+
+export DB_PATH=$PWD/data/mqttplot_main.db
+export DATA_DB_DIR=$PWD/data/topics
+export MQTT_BROKER=<mqtt-broker-ip>
+mkdir -p data/topics
+
+export ADMIN_INIT_PASSWORD="ChangeMeNow!"
+python app.py
+unset ADMIN_INIT_PASSWORD
+```
+Open: http://localhost:5000
+
+### First run initialization
+On the very first startup only, MQTTPlot requires creation of an initial administrator account.
+
+This is done by setting the environment variable: ADMIN_INIT_PASSWORD
+
+#### Behavior
+
+If no admin user exists, MQTTPlot will refuse to start unless ADMIN_INIT_PASSWORD is set.
+
+On successful startup:
+- The admin user is created
+- The password is stored securely in the database
+
+On subsequent runs:
+- ADMIN_INIT_PASSWORD is not required
+- The variable should be removed
+
+#### Windows (PowerShell)
+```
+$env:ADMIN_INIT_PASSWORD="ChangeMeNow!"
+python app.py
+Remove-Item Env:\ADMIN_INIT_PASSWORD
+```
+### Linux
+```
+export ADMIN_INIT_PASSWORD="ChangeMeNow!"
+python app.py
+unset ADMIN_INIT_PASSWORD
+```
+**Do not leave ADMIN_INIT_PASSWORD set permanently.**
+
+It is only intended for first-time initialization.
+
+## VS Code Debugging
+MQTTPlot supports debugging via VS Code, but editor configuration is not
+committed to the repository.
+
+Using launch.json
+1. Create .vscode/launch.json
+2. Example Configuration
+```{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "MQTTPlot (venv)",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/app.py",
+      "env": {
+        "DB_PATH": "data/mqttplot_main.db",
+        "DATA_DB_DIR": "data/topics",
+        "MQTT_BROKER": "<mqtt-broker-ip>",
+        "ADMIN_INIT_PASSWORD": "ChangeMeNow!"
+      }
+    }
+  ]
+}
+```
+3. Press F5 to start debugging
+
+After the first successful run, remove the
+ADMIN_INIT_PASSWORD entry from launch.json.
+
+# Architectuer Overview
+```
+MQTT Broker
+     |
+     v
+ MQTTPlot
+ ├── Flask web server
+ ├── MQTT client (paho-mqtt)
+ ├── SQLite (metadata + per-topic data)
+ └── Browser UI (Plotly)
+```
+## Per Topic Database
+One SQLite file per top-level MQTT Topic
+```
+data/
+├── topics/
+│   ├── watergauge.db
+│   ├── weather.db
+│   └── ...
+```
+
+
 
 ## Quick Start
 ### 1️⃣ Clone the repository
@@ -300,4 +421,5 @@ View live logs:
 ## 📄 License
 
 MIT License — use freely for personal or commercial projects.
-Created with ❤️ by GPT-5 + You.
+Created by Stuart Wood with help from GPT-5
+

@@ -1,76 +1,100 @@
 <!doctype html>
 <html>
+
 <head>
-<meta charset="utf-8"/>
-<title>MQTTPlot</title>
+    <meta charset="utf-8" />
+    <title>MQTTPlot</title>
 
-<script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
-<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 
-<link rel="stylesheet" href="/static/mqttplot.css">
-<script src="/static/mqttplot.js" defer></script>
+    <link rel="stylesheet" href="/static/mqttplot.css">
+    <script src="/static/mqttplot.js" defer></script>
 
 </head>
 
-<body
-  class="{{ 'admin' if admin else '' }}"
-  data-admin="{{ 'true' if admin else 'false' }}"
->
+<body class="{{ 'admin' if admin else '' }}" data-admin="{{ 'true' if admin else 'false' }}">
 
 
-<div id="admin-bar">
-    {% if admin %}
+    <div id="admin-bar">
+        {% if admin %}
         <span><b>Admin:</b> {{ admin_user if admin_user else "yes" }}</span>
         <a href="/admin/logout">Logout</a>
-    {% else %}
+        {% else %}
         <a href="/admin/login">Admin Login</a>
+        {% endif %}
+    </div>
+
+    <h2>MQTTPlot</h2>
+    <p><b>Broker:</b> {{ broker }}</p>
+
+    {% if admin %}
+    <div class="admin-box">
+        <b>Admin Mode Enabled</b>
+    </div>
     {% endif %}
-</div>
 
-<h2>MQTTPlot</h2>
-<p><b>Broker:</b> {{ broker }}</p>
+    <h3>Topics</h3>
+    <div id="topics"></div>
 
-{% if admin %}
-<div class="admin-box">
-    <b>Admin Mode Enabled</b>
-</div>
-{% endif %}
+    <h3>Plot Data</h3>
+    <label>Topic:
+        <input id="topicInput" list="topiclist">
+    </label>
+    <!-- Start time remains optional for manual entry -->
+    <label>From:
+        <input id="start" placeholder="ISO time or epoch (optional)">
+    </label>
 
-<h3>Topics</h3>
-<div id="topics"></div>
+    <!-- End time is no longer user-controlled; keep hidden for internal windowing -->
+    <input id="end" type="hidden" value="">
 
-<h3>Plot Data</h3>
-<label>Topic:
-<input id="topicInput" list="topiclist">
-</label>
-<label>From:
-<input id="start" placeholder="ISO time or epoch (optional)">
-</label>
-<label>To:
-<input id="end" placeholder="ISO time or epoch (optional)">
-</label>
+    <button onclick="plot()">Plot</button>
 
-<button onclick="plot()">Plot</button>
+    <!-- v0.6.0 plot window controls -->
+    <div style="margin-top: 8px;">
+        <button id="btnBack" onclick="slideWindow(-0.5)">◀ Back 50%</button>
+        <button id="btnFwd" onclick="slideWindow(0.5)">Forward 50% ▶</button>
+        <button id="btnZoomIn" onclick="zoomIn()">Zoom In</button>
+        <button id="btnZoomOut" onclick="zoomOut()">Zoom Out</button>
+    </div>
 
-<!-- v0.6.0 plot window controls -->
-<div style="margin-top: 8px;">
-  <button onclick="slideWindow(-0.5)">◀ Back 50%</button>
-  <button onclick="slideWindow(0.5)">Forward 50% ▶</button>
-  <button onclick="zoomWindow(0.5)">Zoom In</button>
-  <button onclick="zoomWindow(2.0)">Zoom Out</button>
-</div>
 
-<datalist id="topiclist"></datalist>
-<div id="plot"></div>
+    <datalist id="topiclist"></datalist>
+    <div id="plot"></div>
 
-{% if admin %}
-<div class="admin-box">
-    <h3>OTA Control</h3>
-    <input id="otaBase" placeholder="Base topic (e.g. watergauge)">
-    <button onclick="sendOTA(1)">Enter OTA</button>
-    <button onclick="sendOTA(0)">Exit OTA</button>
-</div>
-{% endif %}
+    {% if admin %}
+    <div class="admin-box">
+        <h3>OTA Control</h3>
+        <input id="otaBase" placeholder="Base topic (e.g. watergauge)">
+        <button onclick="sendOTA(1)">Enter OTA</button>
+        <button onclick="sendOTA(0)">Exit OTA</button>
+    </div>
+    {% endif %}
 
+    {% if admin %}
+    <hr>
+    <div class="admin-box">
+        <h3>Retention Policies (per Top-Level Topic)</h3>
+        <p>
+            Set <code>max_age_days</code> and/or <code>max_rows</code>. Leave blank to disable that limit.
+        </p>
+        <div>
+            <label>Top-level topic:
+                <input id="ret_top_level" placeholder="e.g. watergauge">
+            </label>
+            <label>Max age (days):
+                <input id="ret_max_age_days" type="number" min="1">
+            </label>
+            <label>Max rows:
+                <input id="ret_max_rows" type="number" min="1">
+            </label>
+            <button onclick="saveRetention()">Save retention</button>
+        </div>
+        <pre id="retention_status"></pre>
+        <hr>
+    </div>
+    {% endif %}
 </body>
+
 </html>

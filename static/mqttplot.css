@@ -37,6 +37,20 @@ input, button {
     border: 1px solid #ddd;
     border-radius: 6px;
 }
+
 #admin-bar a, #admin-bar span {
     margin-left: 8px;
 }
+
+.plot-status {
+  padding: 10px;
+  border: 1px solid #ccc;
+  background: #fafafa;
+  display: inline-block;
+}
+
+label.onclick = () => {
+  document.getElementById('topicInput').value = t.topic;
+  boundsCache[t.topic] = undefined; // force refresh bounds on selection
+  plot();
+};

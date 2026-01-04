@@ -3,7 +3,7 @@
 import eventlet
 eventlet.monkey_patch()
 import sys, os, io, json, time, threading, sqlite3, logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, g, jsonify, request, render_template, send_file
 from flask import session, redirect, abort, url_for
 from flask_socketio import SocketIO
@@ -117,6 +117,103 @@ def update_topic_stats(topic: str, ts: datetime, value) -> None:
     """, (topic, top_level_topic(topic), ts, ts, value))
     db.commit()
 
+def get_validation_rule(topic: str):
+    db = get_db()
+    cur = db.execute(
+        "SELECT min_value, max_value, enabled FROM validation_rules WHERE topic=?",
+        (topic,)
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    return {
+        "min": row["min_value"],
+        "max": row["max_value"],
+        "enabled": bool(row["enabled"])
+    }
+
+def value_is_valid(topic: str, value) -> bool:
+    """
+    Returns True if value passes the validation rules for the topic.
+    If no rule exists, treat as valid.
+    """
+    if value is None:
+        return False  # keep current behavior: we only store numeric values
+
+    rule = get_validation_rule(topic)
+    if not rule or not rule["enabled"]:
+        return True
+
+    vmin = rule["min"]
+    vmax = rule["max"]
+
+    if vmin is not None and value < vmin:
+        return False
+    if vmax is not None and value > vmax:
+        return False
+
+    return True
+
+def get_retention_policy(top_level: str):
+    db = get_db()
+    cur = db.execute(
+        "SELECT max_age_days, max_rows FROM retention_policies WHERE top_level=?",
+        (top_level,)
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    return {
+        "max_age_days": row["max_age_days"],
+        "max_rows": row["max_rows"]
+    }
+
+def enforce_retention_for_top_level(top_level: str) -> None:
+    """
+    Enforce retention policy for a single top-level topic database.
+    Deletes old rows based on max_age_days and/or trims to max_rows.
+    """
+    policy = get_retention_policy(top_level)
+    if not policy:
+        return
+
+    # Open the per-top-level DB directly
+    db_path = os.path.join(DATA_DB_DIR, f"{top_level}.db")
+    if not os.path.exists(db_path):
+        return
+
+    data_db = sqlite3.connect(db_path)
+    data_db.row_factory = sqlite3.Row
+    cur = data_db.cursor()
+
+    # 1) Age-based retention
+    max_age_days = policy["max_age_days"]
+    if max_age_days is not None and max_age_days > 0:
+        cutoff = datetime.now() - timedelta(days=max_age_days)
+        cur.execute("DELETE FROM messages WHERE ts < ?", (cutoff,))
+        data_db.commit()
+
+    # 2) Row-count retention (keep newest N rows)
+    max_rows = policy["max_rows"]
+    if max_rows is not None and max_rows > 0:
+        # count total
+        cur.execute("SELECT COUNT(*) AS n FROM messages")
+        n = cur.fetchone()["n"]
+        if n > max_rows:
+            excess = n - max_rows
+            # delete oldest 'excess' rows by timestamp/id
+            cur.execute("""
+                DELETE FROM messages
+                WHERE id IN (
+                    SELECT id FROM messages
+                    ORDER BY ts ASC, id ASC
+                    LIMIT ?
+                )
+            """, (excess,))
+            data_db.commit()
+
+    data_db.close()
+
 def record_app_version(version: str):
     db = sqlite3.connect(DB_PATH)
     try:
@@ -195,6 +292,25 @@ def init_db():
     )
     """)
 
+    # Retention policies per top-level topic
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS retention_policies (
+        top_level TEXT PRIMARY KEY,
+        max_age_days INTEGER,   -- NULL means no age-based retention
+        max_rows INTEGER        -- NULL means no row-count retention
+    )
+    """)
+
+    # Validation rules per full topic (subtopic)
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS validation_rules (
+        topic TEXT PRIMARY KEY,
+        min_value REAL,         -- NULL means no min
+        max_value REAL,         -- NULL means no max
+        enabled INTEGER DEFAULT 1
+    )
+    """)
+
     c.execute("CREATE INDEX IF NOT EXISTS idx_topic_stats_count ON topic_stats(count)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_topic_stats_top_level ON topic_stats(top_level)")
     db.commit()
@@ -225,10 +341,17 @@ def parse_value(payload_text):
 def store_message(topic, payload):
     payload_text = payload.decode(errors='replace')
     value = parse_value(payload_text)
-
     ts = datetime.now()
 
-    # 1) Write actual time-series data into per-top-level DB
+    # Validate numeric value before storing
+    if value is None:
+        return
+
+    if not value_is_valid(topic, value):
+        logging.warning("Dropped out-of-range value: topic=%s value=%s payload=%s", topic, value, payload_text)
+        return
+
+    # 1) Write time-series data into per-top-level DB
     data_db = get_data_db(topic)
     data_db.execute(
         'INSERT INTO messages(topic, ts, payload, value) VALUES (?, ?, ?, ?)',
@@ -238,7 +361,6 @@ def store_message(topic, payload):
     data_db.close()
 
     # 2) Ensure topic exists in metadata (main DB)
-    #    (do not overwrite an existing visibility setting)
     db = get_db()
     db.execute(
         "INSERT OR IGNORE INTO topic_meta(topic, public) VALUES (?, 1)",
@@ -249,16 +371,21 @@ def store_message(topic, payload):
     # 3) Update lightweight stats (main DB)
     update_topic_stats(topic, ts, value)
 
-    # 4) Emit live update (use strict ISO 8601)
-    if value is not None:
-        socketio.emit(
-            'new_data',
-            {
-                'topic': topic,
-                'ts': ts.isoformat(),   # IMPORTANT: ISO 8601 with "T"
-                'value': value
-            }
-        )
+    # 4) Enforce retention policy for the top-level DB (best-effort)
+    try:
+        enforce_retention_for_top_level(top_level_topic(topic))
+    except Exception:
+        logging.exception("Retention enforcement failed for top-level=%s", top_level_topic(topic))
+
+    # 5) Emit live update (strict ISO 8601)
+    socketio.emit(
+        'new_data',
+        {
+            'topic': topic,
+            'ts': ts.isoformat(),
+            'value': value
+        }
+    )
 
 def on_connect(client, userdata, flags, rc, properties=None):
     if rc==0:
@@ -595,6 +722,109 @@ def admin_topic_visibility():
 
     return jsonify({'status': 'ok'})
 
+@app.route("/api/admin/retention", methods=["GET"])
+def admin_get_retention():
+    require_admin()
+    db = get_db()
+    cur = db.execute("SELECT top_level, max_age_days, max_rows FROM retention_policies ORDER BY top_level")
+    return jsonify([dict(r) for r in cur.fetchall()])
+
+@app.route("/api/admin/retention", methods=["POST"])
+def admin_set_retention():
+    require_admin()
+    body = request.get_json(force=True) or {}
+    top_level = body.get("top_level")
+    if not top_level:
+        return jsonify({"error": "missing top_level"}), 400
+
+    # Allow nulls to mean "no retention"
+    max_age_days = body.get("max_age_days")
+    max_rows = body.get("max_rows")
+
+    def norm_int(x):
+        if x is None or x == "":
+            return None
+        try:
+            return int(x)
+        except Exception:
+            return None
+
+    max_age_days = norm_int(max_age_days)
+    max_rows = norm_int(max_rows)
+
+    db = get_db()
+    db.execute("""
+        INSERT INTO retention_policies(top_level, max_age_days, max_rows)
+        VALUES (?, ?, ?)
+        ON CONFLICT(top_level) DO UPDATE SET
+            max_age_days=excluded.max_age_days,
+            max_rows=excluded.max_rows
+    """, (top_level, max_age_days, max_rows))
+    db.commit()
+
+    return jsonify({"status": "ok", "top_level": top_level, "max_age_days": max_age_days, "max_rows": max_rows})
+
+@app.route("/api/admin/validation", methods=["GET"])
+def admin_get_validation():
+    require_admin()
+    topic = request.args.get("topic")
+    db = get_db()
+    if topic:
+        cur = db.execute("SELECT topic, min_value, max_value, enabled FROM validation_rules WHERE topic=?", (topic,))
+        row = cur.fetchone()
+        return jsonify(dict(row) if row else None)
+
+    cur = db.execute("SELECT topic, min_value, max_value, enabled FROM validation_rules ORDER BY topic")
+    return jsonify([dict(r) for r in cur.fetchall()])
+
+@app.route("/api/admin/validation", methods=["POST"])
+def admin_set_validation():
+    require_admin()
+    body = request.get_json(force=True) or {}
+    topic = body.get("topic")
+    if not topic:
+        return jsonify({"error": "missing topic"}), 400
+
+    def norm_float(x):
+        if x is None or x == "":
+            return None
+        try:
+            return float(x)
+        except Exception:
+            return None
+
+    min_value = norm_float(body.get("min_value"))
+    max_value = norm_float(body.get("max_value"))
+    enabled = 1 if bool(body.get("enabled", True)) else 0
+
+    db = get_db()
+    db.execute("""
+        INSERT INTO validation_rules(topic, min_value, max_value, enabled)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(topic) DO UPDATE SET
+            min_value=excluded.min_value,
+            max_value=excluded.max_value,
+            enabled=excluded.enabled
+    """, (topic, min_value, max_value, enabled))
+    db.commit()
+
+    return jsonify({"status": "ok", "topic": topic, "min_value": min_value, "max_value": max_value, "enabled": bool(enabled)})
+
+    @app.route("/api/admin/retention/apply", methods=["POST"])
+    def admin_apply_retention():
+        require_admin()
+        body = request.get_json(force=True) or {}
+        top_level = body.get("top_level")
+        if not top_level:
+            return jsonify({"error": "missing top_level"}), 400
+
+        try:
+            enforce_retention_for_top_level(top_level)
+        except Exception as e:
+            logging.exception("Retention apply failed for %s", top_level)
+            return jsonify({"error": str(e)}), 500
+
+        return jsonify({"status": "ok", "top_level": top_level})
 
 def main():
     # --- Startup / environment verification ---
