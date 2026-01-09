@@ -19,8 +19,6 @@ const WINDOW_OPTIONS_MS = [
   28 * 24 * 60 * 60 * 1000   // 4 weeks
 ];
 
-const MAX_PLOT_POINTS = 600;
-
 function plotIsReady() {
   const plotDiv = document.getElementById('plot');
   return plotDiv && Array.isArray(plotDiv.data) && plotDiv.data.length > 0;
@@ -29,7 +27,7 @@ function plotIsReady() {
 function safeExtend(ts, value) {
   if (!plotIsReady()) return;
   try {
-    Plotly.extendTraces('plot', { x: [[ts]], y: [[value]] }, [0], MAX_PLOT_POINTS);
+    Plotly.extendTraces('plot', { x: [[ts]], y: [[value]] }, [0]);
   } catch (e) {
     // Do not let a live-update error break the rest of the UI
     console.error("extendTraces failed:", e);
@@ -72,7 +70,7 @@ async function fetchAllValidationRules() {
 socket.on("new_data", msg => {
   if (!currentTopic || msg.topic !== currentTopic) return;
 
-  Plotly.extendTraces('plot', { x: [[msg.ts]], y: [[msg.value]] }, [0]);
+  safeExtend(msg.ts, msg.value);
 
   // Keep window/bounds in sync with latest data
   const ts = new Date(msg.ts);
@@ -109,7 +107,7 @@ socket.on("new_data", msg => {
 socket.on("new_data_admin", msg => {
   if (!adminMode) return;
   if (currentTopic && msg.topic === currentTopic) {
-    Plotly.extendTraces('plot', { x: [[msg.ts]], y: [[msg.value]] }, [0]);
+    safeExtend(msg.ts, msg.value);
   }
 });
 
@@ -362,7 +360,6 @@ async function plot() {
     currentEnd = new Date(b.max);
   }
 
-
   // If start isn't set yet but we have an end and bounds, default to 1-day window
   // (or clamp to bounds)
   if (b && currentEnd && !currentStart) {
@@ -381,8 +378,9 @@ async function plot() {
 
   const res = await fetch(url);
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: "request failed" }));
-    document.getElementById('plot').innerHTML = `Error: ${err.error || res.status}`;
+    const text = await res.text();
+    document.getElementById('plot').innerHTML =
+      `Error fetching data (${res.status} ${res.statusText})<pre style="white-space:pre-wrap">${text}</pre>`;
     return;
   }
 
@@ -561,14 +559,16 @@ async function saveRetention() {
 
   let res;
   try {
-    res = await fetch('/api/admin/retention', {
+    const applyRes = await fetch('/api/admin/retention/apply', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ top_level, max_age_days, max_rows })
+      body: JSON.stringify({ top_level })
     });
+    if (!applyRes.ok) {
+      console.warn("Retention apply failed:", applyRes.status);
+    }
   } catch (e) {
-    statusEl.textContent = `Network error: ${e}`;
-    return;
+    console.warn("Retention apply request error:", e);
   }
 
   const text = await res.text();
@@ -590,34 +590,6 @@ async function saveRetention() {
   });
 }
 
-// async function saveValidation() {
-//     const topicEl = document.getElementById('val_topic');
-//     const minEl = document.getElementById('val_min');
-//     const maxEl = document.getElementById('val_max');
-//     const enabledEl = document.getElementById('val_enabled');
-//     const statusEl = document.getElementById('validation_status');
-
-//     if (!topicEl || !minEl || !maxEl || !enabledEl || !statusEl) return;
-
-//     const topic = topicEl.value.trim();
-//     const min_value = minEl.value;
-//     const max_value = maxEl.value;
-//     const enabled = enabledEl.checked;
-
-//     if (!topic) {
-//         statusEl.textContent = "Error: topic is required.";
-//         return;
-//     }
-
-//     const res = await fetch('/api/admin/validation', {
-//         method: 'POST',
-//         headers: { 'Content-Type': 'application/json' },
-//         body: JSON.stringify({ topic, min_value, max_value, enabled })
-//     });
-
-//     const js = await res.json().catch(() => ({ error: "request failed" }));
-//     statusEl.textContent = JSON.stringify(js, null, 2);
-// }
 
 function showPlotStatus(msg) {
   const plotDiv = document.getElementById('plot');

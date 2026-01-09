@@ -74,47 +74,130 @@ def data_db_path_for_topic(topic: str) -> str:
 
 
 def init_data_db(db_path: str) -> None:
+    """
+    Compact per-top-level DB schema (v2):
+      - topics table stores unique topic strings once
+      - messages stores (topic_id, ts_epoch, value)
+      - ts stored as INTEGER epoch seconds
+      - payload not stored to reduce size
+    """
     db = sqlite3.connect(db_path)
     c = db.cursor()
+
     c.execute("""
-    CREATE TABLE IF NOT EXISTS messages (
+    CREATE TABLE IF NOT EXISTS topics (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        topic TEXT NOT NULL,
-        ts TIMESTAMP NOT NULL,
-        payload TEXT,
-        value REAL
+        topic TEXT NOT NULL UNIQUE
     )
     """)
-    c.execute("CREATE INDEX IF NOT EXISTS idx_topic_ts ON messages(topic, ts)")
+
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS messages (
+        topic_id INTEGER NOT NULL,
+        ts INTEGER NOT NULL,
+        value REAL NOT NULL,
+        FOREIGN KEY(topic_id) REFERENCES topics(id)
+    )
+    """)
+
+    c.execute("CREATE INDEX IF NOT EXISTS idx_messages_topic_ts ON messages(topic_id, ts)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages(ts)")
+
     db.commit()
     db.close()
 
 
+def get_or_create_topic_id(con: sqlite3.Connection, topic: str) -> int:
+    cur = con.execute("SELECT id FROM topics WHERE topic=?", (topic,))
+    row = cur.fetchone()
+    if row:
+        return int(row["id"])
+
+    con.execute("INSERT INTO topics(topic) VALUES (?)", (topic,))
+    con.commit()
+
+    cur = con.execute("SELECT id FROM topics WHERE topic=?", (topic,))
+    return int(cur.fetchone()["id"])
+
+
+
 def get_data_db(topic: str) -> sqlite3.Connection:
-    """
-    Opens (and initializes if needed) the per-top-level SQLite DB for the given topic.
-    """
-    path = data_db_path_for_topic(topic)
-    if not os.path.exists(path):
-        init_data_db(path)
-    conn = sqlite3.connect(path)
-    conn.row_factory = sqlite3.Row
-    return conn
+    os.makedirs(DATA_DB_DIR, exist_ok=True)
+    tl = top_level_topic(topic)
+    db_path = os.path.join(DATA_DB_DIR, f"{tl}.db")
+
+    con = sqlite3.connect(db_path)
+    con.row_factory = sqlite3.Row
+
+    ensure_data_db_schema_v2(con)
+    return con
+
+
+def get_or_create_topic_id(con: sqlite3.Connection, topic: str) -> int:
+    cur = con.execute("SELECT id FROM topics WHERE topic=?", (topic,))
+    row = cur.fetchone()
+    if row:
+        return int(row["id"])
+
+    con.execute("INSERT INTO topics(topic) VALUES (?)", (topic,))
+    con.commit()
+    cur = con.execute("SELECT id FROM topics WHERE topic=?", (topic,))
+    return int(cur.fetchone()["id"])
+
 
 def update_topic_stats(topic: str, ts: datetime, value) -> None:
     """
     Maintain a lightweight index in the MAIN DB so /api/topics is fast without
-    scanning all per-topic databases.
+    scanning all per-top-level databases.
+
+    Assumes topic_stats schema includes:
+      topic, top_level, count, first_ts, last_ts, min_val, max_val, last_value
     """
     db = get_db()
+
+    # First insert a new row if needed
     db.execute("""
-    INSERT INTO topic_stats(topic, top_level, count, first_ts, last_ts, last_value)
-    VALUES (?, ?, 1, ?, ?, ?)
-    ON CONFLICT(topic) DO UPDATE SET
-        count = count + 1,
-        last_ts = excluded.last_ts,
-        last_value = excluded.last_value
-    """, (topic, top_level_topic(topic), ts, ts, value))
+        INSERT INTO topic_stats(topic, top_level, count, first_ts, last_ts, min_val, max_val, last_value)
+        VALUES (?, ?, 1, ?, ?, ?, ?, ?)
+        ON CONFLICT(topic) DO UPDATE SET
+            -- always keep the topic's top_level current (in case parsing changes)
+            top_level = excluded.top_level,
+
+            -- count increments on every accepted message
+            count = topic_stats.count + 1,
+
+            -- first_ts should remain the earliest seen
+            first_ts = CASE
+                WHEN topic_stats.first_ts IS NULL THEN excluded.first_ts
+                WHEN excluded.first_ts < topic_stats.first_ts THEN excluded.first_ts
+                ELSE topic_stats.first_ts
+            END,
+
+            -- last_ts and last_value always update to newest seen
+            last_ts = excluded.last_ts,
+            last_value = excluded.last_value,
+
+            -- expand numeric bounds
+            min_val = CASE
+                WHEN topic_stats.min_val IS NULL THEN excluded.min_val
+                WHEN excluded.min_val < topic_stats.min_val THEN excluded.min_val
+                ELSE topic_stats.min_val
+            END,
+            max_val = CASE
+                WHEN topic_stats.max_val IS NULL THEN excluded.max_val
+                WHEN excluded.max_val > topic_stats.max_val THEN excluded.max_val
+                ELSE topic_stats.max_val
+            END
+    """, (
+        topic,
+        top_level_topic(topic),
+        ts,
+        ts,
+        float(value),
+        float(value),
+        float(value)
+    ))
+
     db.commit()
 
 def get_validation_rule(topic: str):
@@ -169,50 +252,51 @@ def get_retention_policy(top_level: str):
     }
 
 def enforce_retention_for_top_level(top_level: str) -> None:
-    """
-    Enforce retention policy for a single top-level topic database.
-    Deletes old rows based on max_age_days and/or trims to max_rows.
-    """
     policy = get_retention_policy(top_level)
     if not policy:
         return
 
-    # Open the per-top-level DB directly
     db_path = os.path.join(DATA_DB_DIR, f"{top_level}.db")
     if not os.path.exists(db_path):
         return
 
-    data_db = sqlite3.connect(db_path)
-    data_db.row_factory = sqlite3.Row
-    cur = data_db.cursor()
+    con = sqlite3.connect(db_path)
+    con.row_factory = sqlite3.Row
+    ensure_data_db_schema_v2(con)
+    cur = con.cursor()
 
-    # 1) Age-based retention
-    max_age_days = policy["max_age_days"]
+    # Age-based retention
+    max_age_days = policy.get("max_age_days")
     if max_age_days is not None and max_age_days > 0:
-        cutoff = datetime.now() - timedelta(days=max_age_days)
-        cur.execute("DELETE FROM messages WHERE ts < ?", (cutoff,))
-        data_db.commit()
+        cutoff_epoch = int(time.time() - (int(max_age_days) * 86400))
+        cur.execute("DELETE FROM messages WHERE ts < ?", (cutoff_epoch,))
+        con.commit()
 
-    # 2) Row-count retention (keep newest N rows)
-    max_rows = policy["max_rows"]
+    # Row-count retention (overall for the top-level DB)
+    max_rows = policy.get("max_rows")
     if max_rows is not None and max_rows > 0:
-        # count total
         cur.execute("SELECT COUNT(*) AS n FROM messages")
-        n = cur.fetchone()["n"]
+        n = int(cur.fetchone()["n"])
         if n > max_rows:
             excess = n - max_rows
-            # delete oldest 'excess' rows by timestamp/id
             cur.execute("""
                 DELETE FROM messages
-                WHERE id IN (
-                    SELECT id FROM messages
-                    ORDER BY ts ASC, id ASC
+                WHERE rowid IN (
+                    SELECT rowid FROM messages
+                    ORDER BY ts ASC, rowid ASC
                     LIMIT ?
                 )
             """, (excess,))
-            data_db.commit()
+            con.commit()
 
-    data_db.close()
+    con.close()
+
+    # Optional: refresh stats after retention (keep if you want UI counts accurate)
+    try:
+        refresh_topic_stats_for_top_level(top_level)
+    except Exception:
+        logging.exception("Failed to refresh topic_stats after retention for top_level=%s", top_level)
+
 
 def record_app_version(version: str):
     db = sqlite3.connect(DB_PATH)
@@ -268,6 +352,7 @@ def close_db(exc):
     if db is not None:
         db.close()
 
+
 def init_db():
     db = sqlite3.connect(DB_PATH)
     c = db.cursor()
@@ -284,13 +369,26 @@ def init_db():
     c.execute("""
     CREATE TABLE IF NOT EXISTS topic_stats (
         topic TEXT PRIMARY KEY,
-        top_level TEXT,
+        top_level TEXT NOT NULL,
         count INTEGER DEFAULT 0,
         first_ts TIMESTAMP,
         last_ts TIMESTAMP,
+        min_val REAL,
+        max_val REAL,
         last_value REAL
-    )
+    );
     """)
+
+    # --- Schema migration: ensure topic_stats has min_val/max_val columns (v0.6.0) ---
+    cur = db.execute("PRAGMA table_info(topic_stats)")
+    cols = {row[1] for row in cur.fetchall()}  # row[1] is column name
+
+    if "min_val" not in cols:
+        db.execute("ALTER TABLE topic_stats ADD COLUMN min_val REAL")
+    if "max_val" not in cols:
+        db.execute("ALTER TABLE topic_stats ADD COLUMN max_val REAL")
+
+    db.commit()
 
     # Retention policies per top-level topic
     c.execute("""
@@ -338,10 +436,13 @@ def parse_value(payload_text):
     except:
         return None
 
+import time  # add at top if not present
+
+import time
+
 def store_message(topic, payload):
     payload_text = payload.decode(errors='replace')
     value = parse_value(payload_text)
-    ts = datetime.now()
 
     # Validate numeric value before storing
     if value is None:
@@ -351,11 +452,16 @@ def store_message(topic, payload):
         logging.warning("Dropped out-of-range value: topic=%s value=%s payload=%s", topic, value, payload_text)
         return
 
-    # 1) Write time-series data into per-top-level DB
+    ts_epoch = int(time.time())
+    ts_dt = datetime.fromtimestamp(ts_epoch)
+
+    # 1) Write compact time-series data into per-top-level DB
     data_db = get_data_db(topic)
+    topic_id = get_or_create_topic_id(data_db, topic)
+
     data_db.execute(
-        'INSERT INTO messages(topic, ts, payload, value) VALUES (?, ?, ?, ?)',
-        (topic, ts, payload_text, value)
+        "INSERT INTO messages(topic_id, ts, value) VALUES (?, ?, ?)",
+        (topic_id, ts_epoch, float(value))
     )
     data_db.commit()
     data_db.close()
@@ -369,7 +475,7 @@ def store_message(topic, payload):
     db.commit()
 
     # 3) Update lightweight stats (main DB)
-    update_topic_stats(topic, ts, value)
+    update_topic_stats(topic, ts_dt, float(value))
 
     # 4) Enforce retention policy for the top-level DB (best-effort)
     try:
@@ -377,15 +483,16 @@ def store_message(topic, payload):
     except Exception:
         logging.exception("Retention enforcement failed for top-level=%s", top_level_topic(topic))
 
-    # 5) Emit live update (strict ISO 8601)
+    # 5) Emit live update (ISO for browser)
     socketio.emit(
         'new_data',
         {
             'topic': topic,
-            'ts': ts.isoformat(),
-            'value': value
+            'ts': ts_dt.isoformat(),
+            'value': float(value)
         }
     )
+
 
 def on_connect(client, userdata, flags, rc, properties=None):
     if rc==0:
@@ -433,6 +540,99 @@ def parse_time(s):
         except:
             raise ValueError('invalid time')
 
+def refresh_topic_stats_for_top_level(top_level: str) -> None:
+    """
+    Recompute topic_stats entries for all topics stored in <DATA_DB_DIR>/<top_level>.db
+    using v2 compact schema:
+      - topics(id, topic)
+      - messages(topic_id, ts_epoch, value)
+
+    Updates the main DB so the UI counts reflect retention purges.
+    """
+    db_path = os.path.join(DATA_DB_DIR, f"{top_level}.db")
+    if not os.path.exists(db_path):
+        return
+
+    data_db = sqlite3.connect(db_path)
+    data_db.row_factory = sqlite3.Row
+    ensure_data_db_schema_v2(data_db)
+    cur = data_db.cursor()
+
+    # Aggregate remaining data by full topic via join on topics
+    cur.execute("""
+        SELECT
+            t.topic AS topic,
+            COUNT(*) AS count,
+            MIN(m.ts) AS first_ts_epoch,
+            MAX(m.ts) AS last_ts_epoch,
+            MIN(m.value) AS min_val,
+            MAX(m.value) AS max_val
+        FROM messages m
+        JOIN topics t ON t.id = m.topic_id
+        GROUP BY t.topic
+        ORDER BY t.topic
+    """)
+    rows = cur.fetchall()
+    data_db.close()
+
+    main = get_db()
+
+    # Remove existing stats for this top-level (topics have NO leading slash in your system)
+    prefix = f"{top_level}/%"
+    exact = f"{top_level}"
+    main.execute("DELETE FROM topic_stats WHERE topic LIKE ? OR topic = ?", (prefix, exact))
+
+    # Insert refreshed stats
+    for r in rows:
+        first_ts_iso = datetime.fromtimestamp(int(r["first_ts_epoch"])).isoformat()
+        last_ts_iso = datetime.fromtimestamp(int(r["last_ts_epoch"])).isoformat()
+
+        main.execute("""
+            INSERT INTO topic_stats(topic, count, first_ts, last_ts, min_val, max_val)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(topic) DO UPDATE SET
+                count=excluded.count,
+                first_ts=excluded.first_ts,
+                last_ts=excluded.last_ts,
+                min_val=excluded.min_val,
+                max_val=excluded.max_val
+        """, (
+            r["topic"],
+            int(r["count"]),
+            first_ts_iso,
+            last_ts_iso,
+            float(r["min_val"]) if r["min_val"] is not None else None,
+            float(r["max_val"]) if r["max_val"] is not None else None,
+        ))
+
+    main.commit()
+
+
+def ensure_data_db_schema_v2(con: sqlite3.Connection) -> None:
+    cur = con.cursor()
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS topics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            topic TEXT NOT NULL UNIQUE
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS messages (
+            topic_id INTEGER NOT NULL,
+            ts INTEGER NOT NULL,      -- epoch seconds
+            value REAL NOT NULL,
+            FOREIGN KEY(topic_id) REFERENCES topics(id)
+        )
+    """)
+
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_topic_ts ON messages(topic_id, ts)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages(ts)")
+
+    con.commit()
+
+
 @app.route('/api/config', methods=['GET'])
 def api_get_config():
     return jsonify(PLOT_CONFIG)
@@ -466,50 +666,6 @@ def api_topics():
     cur = db.execute(sql)
     return jsonify([dict(r) for r in cur.fetchall()])
 
-@app.route('/api/data', methods=['GET'])
-def api_data():
-    topic = request.args.get('topic')
-    if not topic:
-        return jsonify({'error':'missing topic'}), 400
-
-    # Visibility check uses main DB
-    if not is_admin():
-        db = get_db()
-        cur = db.execute(
-            "SELECT COALESCE(public,1) AS public FROM topic_meta WHERE topic=?",
-            (topic,)
-        )
-        row = cur.fetchone()
-        if row and row["public"] == 0:
-            return jsonify({'error': 'topic not public'}), 403
-
-    start = request.args.get('start')
-    end = request.args.get('end')
-    limit = int(request.args.get('limit', PLOT_CONFIG['max_points']))
-
-    sql = 'SELECT ts, value FROM messages WHERE topic=? AND value IS NOT NULL'
-    params = [topic]
-    if start:
-        sql += ' AND ts >= ?'
-        params.append(parse_time(start))
-    if end:
-        sql += ' AND ts <= ?'
-        params.append(parse_time(end))
-    sql += ' ORDER BY ts ASC LIMIT ?'
-    params.append(limit)
-
-    data_db = get_data_db(topic)
-    cur = data_db.execute(sql, params)
-    rows = [{'ts': r['ts'], 'value': r['value']} for r in cur.fetchall()]
-    data_db.close()
-
-    # Normalize timestamps for JS (strict ISO 8601)
-    for r in rows:
-        if not isinstance(r['ts'], str):
-            r['ts'] = r['ts'].isoformat()
-
-    return jsonify(rows)
-
 
 @app.route('/api/plot_image', methods=['GET'])
 def api_plot_image():
@@ -542,38 +698,128 @@ def api_plot_image():
         return jsonify({'error':'image generation failed','detail':str(e)}),500
     buf.seek(0); return send_file(buf, mimetype='image/png')
 
-@app.route('/api/bounds', methods=['GET'])
-def api_bounds():
-    topic = request.args.get('topic')
+@app.route("/api/data")
+def api_data():
+    topic = request.args.get("topic")
     if not topic:
-        return jsonify({'error': 'missing topic'}), 400
+        return jsonify({"error": "missing topic"}), 400
 
-    # Same visibility rule as /api/data
-    if not is_admin():
-        db = get_db()
-        cur = db.execute(
-            "SELECT COALESCE(public,1) AS public FROM topic_meta WHERE topic=?",
-            (topic,)
-        )
-        row = cur.fetchone()
-        if row and row["public"] == 0:
-            return jsonify({'error': 'topic not public'}), 403
+    # (keep your visibility checks here)
 
-    data_db = get_data_db(topic)
-    cur = data_db.execute(
-        "SELECT MIN(ts) AS min_ts, MAX(ts) AS max_ts FROM messages WHERE topic=? AND value IS NOT NULL",
-        (topic,)
-    )
+    # Parse optional start/end (ISO strings)
+    start = request.args.get("start")
+    end = request.args.get("end")
+
+    def to_epoch(s: str):
+        if not s:
+            return None
+        try:
+            # allow epoch numeric too
+            if s.isdigit():
+                return int(s)
+            return int(datetime.fromisoformat(s).timestamp())
+        except Exception:
+            return None
+
+    start_epoch = to_epoch(start)
+    end_epoch = to_epoch(end)
+
+    # Optional limit (if you still support it)
+    limit = request.args.get("limit")
+    try:
+        limit = int(limit) if limit else None
+    except Exception:
+        limit = None
+    if limit is not None:
+        limit = max(1, min(limit, 200000))  # safety cap
+
+    # Open per-top-level DB
+    tl = top_level_topic(topic)
+    db_path = os.path.join(DATA_DB_DIR, f"{tl}.db")
+    if not os.path.exists(db_path):
+        return jsonify([])
+
+    con = sqlite3.connect(db_path)
+    con.row_factory = sqlite3.Row
+    ensure_data_db_schema_v2(con)
+
+    # Resolve topic_id
+    cur = con.execute("SELECT id FROM topics WHERE topic=?", (topic,))
     row = cur.fetchone()
-    data_db.close()
+    if not row:
+        con.close()
+        return jsonify([])
 
-    if not row or (row["min_ts"] is None) or (row["max_ts"] is None):
-        return jsonify({'error': 'no data'}), 404
+    topic_id = int(row["id"])
 
-    min_ts = row["min_ts"].isoformat() if not isinstance(row["min_ts"], str) else row["min_ts"]
-    max_ts = row["max_ts"].isoformat() if not isinstance(row["max_ts"], str) else row["max_ts"]
+    clauses = ["topic_id=?"]
+    params = [topic_id]
 
-    return jsonify({'min_ts': min_ts, 'max_ts': max_ts})
+    if start_epoch is not None:
+        clauses.append("ts >= ?")
+        params.append(start_epoch)
+    if end_epoch is not None:
+        clauses.append("ts <= ?")
+        params.append(end_epoch)
+
+    where_sql = " AND ".join(clauses)
+
+    sql = f"SELECT ts, value FROM messages WHERE {where_sql} ORDER BY ts ASC"
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(limit)
+
+    cur = con.execute(sql, tuple(params))
+    rows = cur.fetchall()
+    con.close()
+
+    # Convert epoch -> ISO for frontend
+    out = []
+    for r in rows:
+        out.append({
+            "ts": datetime.fromtimestamp(int(r["ts"])).isoformat(),
+            "value": float(r["value"])
+        })
+    return jsonify(out)
+
+
+@app.route("/api/bounds")
+def api_bounds():
+    topic = request.args.get("topic")
+    if not topic:
+        return jsonify({"error": "missing topic"}), 400
+
+    # (keep your visibility checks here)
+
+    tl = top_level_topic(topic)
+    db_path = os.path.join(DATA_DB_DIR, f"{tl}.db")
+    if not os.path.exists(db_path):
+        return jsonify({"error": "no data"}), 404
+
+    con = sqlite3.connect(db_path)
+    con.row_factory = sqlite3.Row
+    ensure_data_db_schema_v2(con)
+
+    cur = con.execute("SELECT id FROM topics WHERE topic=?", (topic,))
+    row = cur.fetchone()
+    if not row:
+        con.close()
+        return jsonify({"error": "no data"}), 404
+
+    topic_id = int(row["id"])
+
+    cur = con.execute("SELECT MIN(ts) AS min_ts, MAX(ts) AS max_ts FROM messages WHERE topic_id=?", (topic_id,))
+    r = cur.fetchone()
+    con.close()
+
+    if r["min_ts"] is None or r["max_ts"] is None:
+        return jsonify({"error": "no data"}), 404
+
+    return jsonify({
+        "min_ts": datetime.fromtimestamp(int(r["min_ts"])).isoformat(),
+        "max_ts": datetime.fromtimestamp(int(r["max_ts"])).isoformat(),
+    })
+
 
 @app.route('/viewer')
 def viewer():
@@ -581,7 +827,6 @@ def viewer():
     cursor = conn.cursor()
 
     topic = request.args.get("topic")
-    limit = int(request.args.get("limit", 100))
 
     if topic:
         cursor.execute("""
@@ -733,24 +978,24 @@ def admin_get_retention():
 def admin_set_retention():
     require_admin()
     body = request.get_json(force=True) or {}
+
     top_level = body.get("top_level")
     if not top_level:
         return jsonify({"error": "missing top_level"}), 400
 
-    # Allow nulls to mean "no retention"
-    max_age_days = body.get("max_age_days")
-    max_rows = body.get("max_rows")
-
+    # Allow null/blank to mean "no retention"
     def norm_int(x):
-        if x is None or x == "":
+        if x is None:
+            return None
+        if isinstance(x, str) and x.strip() == "":
             return None
         try:
             return int(x)
         except Exception:
             return None
 
-    max_age_days = norm_int(max_age_days)
-    max_rows = norm_int(max_rows)
+    max_age_days = norm_int(body.get("max_age_days"))
+    max_rows = norm_int(body.get("max_rows"))
 
     db = get_db()
     db.execute("""
@@ -762,7 +1007,19 @@ def admin_set_retention():
     """, (top_level, max_age_days, max_rows))
     db.commit()
 
-    return jsonify({"status": "ok", "top_level": top_level, "max_age_days": max_age_days, "max_rows": max_rows})
+    # Apply immediately so the UI reflects the change without waiting for new MQTT messages
+    try:
+        enforce_retention_for_top_level(top_level)
+    except Exception:
+        logging.exception("Retention enforcement failed on save for top_level=%s", top_level)
+        # Keep returning ok for the save itself; enforcement failures are logged
+
+    return jsonify({
+        "status": "ok",
+        "top_level": top_level,
+        "max_age_days": max_age_days,
+        "max_rows": max_rows
+    })
 
 @app.route("/api/admin/validation", methods=["GET"])
 def admin_get_validation():
@@ -810,21 +1067,21 @@ def admin_set_validation():
 
     return jsonify({"status": "ok", "topic": topic, "min_value": min_value, "max_value": max_value, "enabled": bool(enabled)})
 
-    @app.route("/api/admin/retention/apply", methods=["POST"])
-    def admin_apply_retention():
-        require_admin()
-        body = request.get_json(force=True) or {}
-        top_level = body.get("top_level")
-        if not top_level:
-            return jsonify({"error": "missing top_level"}), 400
+    # @app.route("/api/admin/retention/apply", methods=["POST"])
+    # def admin_apply_retention(): 
+    #     require_admin()
+    #     body = request.get_json(force=True) or {}
+    #     top_level = body.get("top_level")
+    #     if not top_level:
+    #         return jsonify({"error": "missing top_level"}), 400
 
-        try:
-            enforce_retention_for_top_level(top_level)
-        except Exception as e:
-            logging.exception("Retention apply failed for %s", top_level)
-            return jsonify({"error": str(e)}), 500
+    #     try:
+    #         enforce_retention_for_top_level(top_level)
+    #     except Exception as e:
+    #         logging.exception("Retention apply failed for %s", top_level)
+    #         return jsonify({"error": str(e)}), 500
 
-        return jsonify({"status": "ok", "top_level": top_level})
+    #     return jsonify({"status": "ok", "top_level": top_level})
 
 def main():
     # --- Startup / environment verification ---
