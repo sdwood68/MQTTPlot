@@ -49,16 +49,25 @@ project evolves.
 - Ensure embedded plots:
   - Respect data bounds and retention limits
   - Update automatically as new data arrives (where applicable)
+- Multiple plt variables
 
 ### Access and Safety Considerations
 - Define clear separation between:
   - Local/owner views
   - Public or shared embedded views
 - Provide configuration options to:
+  - Enable Disable topic storage.
   - Enable or disable embedding
   - Restrict which topics are shareable
 - Lay groundwork for future authentication or access controls
 
+### Security Improvements
+- Black List topics to avoid database size runaway
+  - Identify and stop logging runaway topics that exceed:
+    - Certain message rate
+    - data size
+    - Invalid data types
+-
 ---
 
 ## Future (Tentative)
