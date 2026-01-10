@@ -20,6 +20,14 @@ overkill.
 
 ---
 
+
+## Roadmap status
+
+Implemented milestone highlights:
+- **0.6.0 (delivered via 0.6.1):** interactive time-window navigation (zoom/slide) and persistent storage per top-level MQTT topic
+- **0.6.2 (planned):** code cleaning, review, and reorganization focused on maintainability and testability
+
+
 ## 📦 Requirements
 - Python 3.9+
 - MQTT broker (e.g., Mosquitto)
@@ -422,4 +430,3 @@ View live logs:
 
 MIT License — use freely for personal or commercial projects.
 Created by Stuart Wood with help from GPT-5
-

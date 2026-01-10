@@ -8,6 +8,9 @@ project evolves.
 
 ## 0.6.0 — Interactive Navigation & Persistence
 
+**Status:** Delivered (implemented across 0.6.1)
+
+
 ### Interactive Plot Window Control
 - Add **four-button control** for navigating the plot time window:
   - **Increase time window** (zoom out)
@@ -34,6 +37,35 @@ project evolves.
   - Disk usage growth
 
 ---
+
+## 0.6.2 — Code Cleaning / Review / Reorganization
+
+**Goal:** Improve maintainability and clarity while preserving current user-facing behavior.
+
+### Refactor & Structure
+- Separate core concerns into modules (examples):
+  - MQTT ingestion / message normalization
+  - Persistence layer (SQLite access, schema, retention)
+  - Plot building / rendering utilities
+  - Admin/auth utilities
+- Consolidate configuration handling (environment variables, defaults, validation)
+
+### Quality & Safety
+- Add lightweight type hints for public helpers and internal boundaries
+- Reduce implicit globals where practical; prefer dependency injection for DB handles
+- Standardize logging (consistent logger usage, log levels, message formats)
+
+### Testability
+- Expand unit tests around:
+  - Topic normalization and top-level routing
+  - Time-window math (zoom/slide)
+  - Persistence retention logic
+- Add a minimal test harness that can run without an MQTT broker (mock client)
+
+### Documentation
+- Document internal architecture (one short “How it works” section)
+- Clarify configuration variables and defaults in README
+
 
 ## 0.7.0 — Sharing & Embedding
 
