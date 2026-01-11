@@ -17,3 +17,9 @@ data/*
 
 # SQLite databases (extra safety)
 *.db
+
+# test script directory
+test/
+
+# vscode enviroment file
+.env

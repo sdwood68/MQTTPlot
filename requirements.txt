@@ -8,3 +8,4 @@ requests>=2.32
 paho-mqtt 
 waitress
 Werkzeug>=3.0
+python-dotenv>=1.2

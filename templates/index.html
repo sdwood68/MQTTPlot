@@ -10,19 +10,24 @@
 
     <link rel="stylesheet" href="/static/mqttplot.css">
     <script src="/static/mqttplot.js" defer></script>
-
 </head>
 
 <body class="{{ 'admin' if admin else '' }}" data-admin="{{ 'true' if admin else 'false' }}">
 
+  <div id="top-bar">
+      <div id="mqtt-status" class="mqtt-status mqtt-status--unknown">
+        MQTT: (checking…)
+      </div>
 
-    <div id="admin-bar">
+      <div id="admin-bar">
+        <!-- keep your existing admin bar contents exactly as-is -->
         {% if admin %}
-        <span><b>Admin:</b> {{ admin_user if admin_user else "yes" }}</span>
-        <a href="/admin/logout">Logout</a>
+        <span>Admin: {{ admin_user }}</span>
+        <a href="/logout">Logout</a>
         {% else %}
-        <a href="/admin/login">Admin Login</a>
+        <a href="/login">Admin Login</a>
         {% endif %}
+      </div>
     </div>
 
     <h2>MQTTPlot</h2>

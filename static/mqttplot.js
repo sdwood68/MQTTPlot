@@ -600,3 +600,52 @@ function showPlotStatus(msg) {
 
 loadTopics();
 setInterval(loadTopics, 10000);
+
+function formatCountdownSeconds(nextRetryTs) {
+  if (!nextRetryTs) return null;
+  const now = Date.now() / 1000;
+  const delta = Math.ceil(nextRetryTs - now);
+  return delta > 0 ? delta : 0;
+}
+
+async function refreshMqttStatus() {
+  const el = document.getElementById("mqtt-status");
+  if (!el) return;
+
+  try {
+    const resp = await fetch("/api/mqtt/status", { cache: "no-store" });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const s = await resp.json();
+
+    if (s.connected) {
+      el.className = "mqtt-status mqtt-status--ok";
+      el.textContent = "MQTT: Connected";
+      return;
+    }
+
+    // Disconnected
+    const retryIn = formatCountdownSeconds(s.next_retry_ts);
+    const parts = ["MQTT: Disconnected"];
+
+    if (s.last_error) parts.push(`(${s.last_error})`);
+    if (typeof retryIn === "number") parts.push(`— retry in ${retryIn}s`);
+
+    el.className = "mqtt-status mqtt-status--down";
+    el.textContent = parts.join(" ");
+  } catch (e) {
+    el.className = "mqtt-status mqtt-status--unknown";
+    el.textContent = "MQTT: Status unavailable";
+  }
+}
+
+// Call once at startup and then poll every 5 seconds.
+document.addEventListener("DOMContentLoaded", () => {
+  refreshMqttStatus();
+  setInterval(refreshMqttStatus, 5000);
+});
+
+label.onclick = () => {
+  document.getElementById('topicInput').value = t.topic;
+  boundsCache[t.topic] = undefined; // force refresh bounds on selection
+  plot();
+};

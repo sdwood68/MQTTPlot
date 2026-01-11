@@ -4,9 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [0.6.2] - 2026-01-09
 ### Added
-- Roadmap milestone: 0.6.2 “Code cleaning / review / reorganization” (planning and tracking)
+- Maintenance milestone: 0.6.2 “Code cleaning / review / reorganization”
+- Python package structure introduced under `mqttplot/` (incremental refactor; legacy entrypoint retained)
 
 ### Changed
+- Phase 1 refactor: extracted persistence layer to `mqttplot/storage.py` and MQTT worker to `mqttplot/mqtt_client.py`
+- Root `app.py` now acts as a compatibility wrapper that calls `mqttplot.app.main()`
 - Documentation refresh: ROADMAP status annotations and README roadmap overview
 
 ### Notes

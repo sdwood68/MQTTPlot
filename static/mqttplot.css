@@ -1,4 +1,5 @@
 body {
+    padding-top: 30px; /* adjust to taste */
     font-family: sans-serif;
     margin: 20px;
     max-width: 1000px;
@@ -27,15 +28,32 @@ input, button {
     margin-top: 15px;
 }
 
+#top-bar {
+  position: fixed;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: calc(100% - 40px);   /* respects your 20px body margin */
+  max-width: 1000px;          /* matches body max-width */
+  z-index: 1000;
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+
+  pointer-events: none;
+}
+
+#top-bar > * {
+  pointer-events: auto;
+}
+
 #admin-bar {
-    position: fixed;
-    top: 8px;
-    right: 12px;
-    z-index: 1000;
-    background: rgba(255,255,255,0.9);
-    padding: 6px 8px;
-    border: 1px solid #ddd;
-    border-radius: 6px;
+  background: rgba(255,255,255,0.9);
+  padding: 6px 8px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
 }
 
 #admin-bar a, #admin-bar span {
@@ -49,8 +67,27 @@ input, button {
   display: inline-block;
 }
 
-label.onclick = () => {
-  document.getElementById('topicInput').value = t.topic;
-  boundsCache[t.topic] = undefined; // force refresh bounds on selection
-  plot();
-};
+.mqtt-status {
+  display: inline-block;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  border: 1px solid #ccc;
+  margin: 0; /* important inside a fixed top bar */
+  background: #f2f2f2; /* optional; your modifier classes override */
+}
+
+.mqtt-status--ok {
+  background: #e9f7ef;
+  border-color: #a6d8b7;
+}
+
+.mqtt-status--down {
+  background: #fff4e5;
+  border-color: #ffd18a;
+}
+
+.mqtt-status--unknown {
+  background: #f2f2f2;
+  border-color: #d0d0d0;
+}

@@ -42,6 +42,13 @@ project evolves.
 
 **Goal:** Improve maintainability and clarity while preserving current user-facing behavior.
 
+**Status:** In progress (Phase 1 completed in 0.6.2 refactor build)
+
+### Phase Plan
+- **Phase 1 (Python):** Introduce `mqttplot/` package; extract persistence to `mqttplot/storage.py` and MQTT loop to `mqttplot/mqtt_client.py`; keep root `app.py` as a compatibility wrapper.
+- **Phase 2 (JavaScript):** Split `static/mqttplot.js` into focused modules (`api.js`, `controls.js`, `plot.js`) without changing UI behavior.
+- **Phase 3 (Tests & tooling):** Reorganize tests by concern, add fixtures, and tighten linting/type hints (lightweight).
+
 ### Refactor & Structure
 - Separate core concerns into modules (examples):
   - MQTT ingestion / message normalization
