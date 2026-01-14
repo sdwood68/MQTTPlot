@@ -19,6 +19,68 @@ from . import config
 
 logger = logging.getLogger("mqttplot.storage")
 
+def _configure_sqlite_connection(con: sqlite3.Connection, *, wal: bool) -> None:
+    """
+    Apply connection-level SQLite pragmas.
+    IMPORTANT: journal_mode is persistent per DB file; busy_timeout is per connection.
+    """
+    cur = con.cursor()
+
+    # Always: fail less often under contention
+    cur.execute("PRAGMA busy_timeout=5000")  # ms
+
+    # Recommended generally
+    cur.execute("PRAGMA foreign_keys=ON")
+
+    if wal:
+        # Idempotent and persistent per DB file
+        cur.execute("PRAGMA journal_mode=WAL")
+
+        # Throughput-friendly setting for WAL workloads
+        cur.execute("PRAGMA synchronous=NORMAL")
+
+        # Optional tuning; safe defaults
+        cur.execute("PRAGMA wal_autocheckpoint=1000")
+
+    con.commit()
+
+
+def _open_meta_con() -> sqlite3.Connection:
+    """
+    Open a metadata DB connection with consistent pragmas.
+    Use this for ALL non-Flask-request background metadata access.
+    """
+    meta_path = os.path.abspath(config.DB_PATH)
+    os.makedirs(os.path.dirname(meta_path), exist_ok=True)
+
+    con = sqlite3.connect(
+        meta_path,
+        timeout=10.0,
+        check_same_thread=False,   # safe when each call creates/uses its own connection
+    )
+    con.row_factory = sqlite3.Row
+    _configure_sqlite_connection(con, wal=True)
+    return con
+
+
+def _ensure_topic_meta_columns(con: sqlite3.Connection) -> None:
+    """
+    Ensure topic_meta has the policy columns needed for storage/rate limiting scaffolding.
+    Safe to run on every startup.
+    """
+    cur = con.cursor()
+    cols = {r["name"] for r in cur.execute("PRAGMA table_info(topic_meta)").fetchall()}
+
+    if "store_enabled" not in cols:
+        cur.execute("ALTER TABLE topic_meta ADD COLUMN store_enabled INTEGER NOT NULL DEFAULT 1")
+    if "max_msgs_per_min" not in cols:
+        cur.execute("ALTER TABLE topic_meta ADD COLUMN max_msgs_per_min INTEGER")
+    if "auto_disabled" not in cols:
+        cur.execute("ALTER TABLE topic_meta ADD COLUMN auto_disabled INTEGER NOT NULL DEFAULT 0")
+
+    con.commit()
+
+
 def _convert_timestamp(val: bytes) -> datetime:
     """
     SQLite TIMESTAMP converter that supports both:
@@ -46,17 +108,18 @@ def _convert_timestamp(val: bytes) -> datetime:
 
 def get_meta_db() -> sqlite3.Connection:
     """Metadata database connection (Flask context cached)."""
-    db = getattr(g, "_database", None)
+    db = getattr(g, "_meta_db", None)
     logger.debug("Using metadata DB: %s", os.path.abspath(config.DB_PATH))
+
     if db is None:
-        db = g._database = sqlite3.connect(config.DB_PATH, timeout=10.0)
+        db = g._meta_db = sqlite3.connect(
+            config.DB_PATH,
+            detect_types=sqlite3.PARSE_DECLTYPES,
+            timeout=10.0,
+            check_same_thread=False,  # safe because this connection is per-request
+        )
         db.row_factory = sqlite3.Row
-        try:
-            db.execute("PRAGMA journal_mode=WAL;")
-            db.execute("PRAGMA synchronous=NORMAL;")
-            db.execute("PRAGMA busy_timeout=5000;")
-        except Exception:
-            pass
+        _configure_sqlite_connection(db, wal=True)
     return db
 
 
@@ -81,6 +144,7 @@ def topic_root(topic: str) -> str:
     if not t:
         return "_root"
     return t.split("/", 1)[0] or "_root"
+
 
 def topic_db_path(topic: str) -> str:
     """
@@ -163,38 +227,23 @@ def get_data_db(topic: str) -> sqlite3.Connection:
 
 
 def close_meta_db(exc: Exception | None = None) -> None:
-    """Close any open DB connections for this Flask request."""
-    db = getattr(g, "_database", None)
+    """Close any open metadata DB connection for this Flask request."""
+    db = getattr(g, "_meta_db", None)
     if db is not None:
         try:
             db.close()
         except Exception:
             pass
+        try:
+            delattr(g, "_meta_db")
+        except Exception:
+            pass
 
-    data_dbs = getattr(g, "_data_dbs", None)
-    if data_dbs:
-        for conn in data_dbs.values():
-            try:
-                conn.close()
-            except Exception:
-                pass
 
 def init_meta_db() -> None:
-    """
-    Initialize metadata DB.
-    Creates tables if they do not already exist.
-    """
-    logging.getLogger(__name__).info("Using metadata DB: %s", os.path.abspath(config.DB_PATH))
-    conn = sqlite3.connect(config.DB_PATH, timeout=10.0)
+    """Initialize metadata DB schema and enable WAL to reduce lock contention."""
+    conn = _open_meta_con()
     cur = conn.cursor()
-
-    # Better concurrency between Flask and ingest thread
-    try:
-        cur.execute("PRAGMA journal_mode=WAL;")
-        cur.execute("PRAGMA synchronous=NORMAL;")
-        cur.execute("PRAGMA busy_timeout=5000;")
-    except Exception:
-        pass
 
     cur.execute(
         """
@@ -211,7 +260,7 @@ def init_meta_db() -> None:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
-            created_ts_epoch REAL DEFAULT (strftime('%s','now'))
+            created_ts_epoch REAL NOT NULL
         )
         """
     )
@@ -220,7 +269,9 @@ def init_meta_db() -> None:
         """
         CREATE TABLE IF NOT EXISTS validation_rules (
             topic TEXT PRIMARY KEY,
-            rule_json TEXT NOT NULL
+            min_value REAL,
+            max_value REAL,
+            enabled INTEGER NOT NULL DEFAULT 1
         )
         """
     )
@@ -229,51 +280,46 @@ def init_meta_db() -> None:
         """
         CREATE TABLE IF NOT EXISTS retention_policies (
             top_level TEXT PRIMARY KEY,
-            days INTEGER NOT NULL
+            max_age_days INTEGER,
+            max_rows INTEGER
         )
         """
     )
 
-    # Epoch seconds are smaller and faster to compare
-    cur.execute("""
+    cur.execute(
+        """
         CREATE TABLE IF NOT EXISTS topic_stats (
             topic TEXT PRIMARY KEY,
             first_seen_ts_epoch REAL,
             last_seen_ts_epoch REAL,
             message_count INTEGER NOT NULL DEFAULT 0,
-            last_value TEXT,
-
-            -- Optional future-proof counters
-            stored_count INTEGER,
-            dropped_count INTEGER
+            last_value REAL,
+            stored_count INTEGER NOT NULL DEFAULT 0,
+            dropped_count INTEGER NOT NULL DEFAULT 0
         )
-    """)
+        """
+    )
 
-    cur.execute("""
+    cur.execute(
+        """
         CREATE TABLE IF NOT EXISTS topic_meta (
             topic TEXT PRIMARY KEY,
             public INTEGER NOT NULL DEFAULT 1,
-
-            -- Future-proof policy controls (optional)
+            enabled INTEGER NOT NULL DEFAULT 1,
             store_enabled INTEGER NOT NULL DEFAULT 1,
-            max_msgs_per_min REAL,
-            auto_disabled INTEGER NOT NULL DEFAULT 0,
-            disabled_reason TEXT,
-            updated_ts_epoch REAL
+            max_msgs_per_min INTEGER,
+            auto_disabled INTEGER NOT NULL DEFAULT 0
         )
-    """)
+        """
+    )
 
     conn.commit()
     conn.close()
 
+
 def record_app_version(version: str) -> None:
-    """
-    Record the current application version in the metadata DB.
-    Metadata DB must already exist.
-    """
-    conn = sqlite3.connect(config.DB_PATH)
-    cur = conn.cursor()
-    cur.execute(
+    conn = _open_meta_con()
+    conn.execute(
         "INSERT OR REPLACE INTO app_meta(key,value) VALUES(?,?)",
         ("app_version", version),
     )
@@ -282,14 +328,6 @@ def record_app_version(version: str) -> None:
 
 
 def init_admin_user() -> None:
-    """
-    Initialize the default admin user if ADMIN_INIT_PASSWORD is set.
-    Metadata DB must already exist.
-    Behavior:
-      - If env var ADMIN_INIT_PASSWORD is NOT set: do nothing.
-      - If set and no 'admin' user exists: create user 'admin' with that password.
-      - If set and 'admin' exists: do nothing.
-    """
     import os
     from werkzeug.security import generate_password_hash
 
@@ -297,20 +335,8 @@ def init_admin_user() -> None:
     if not init_pw:
         return
 
-    conn = sqlite3.connect(config.DB_PATH)
+    conn = _open_meta_con()
     cur = conn.cursor()
-
-    # Ensure schema exists (safe if already called elsewhere)
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS admin_users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            created TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        """
-    )
 
     cur.execute("SELECT 1 FROM admin_users WHERE username = ?", ("admin",))
     exists = cur.fetchone() is not None
@@ -318,8 +344,8 @@ def init_admin_user() -> None:
     if not exists:
         pw_hash = generate_password_hash(init_pw)
         cur.execute(
-            "INSERT INTO admin_users(username, password_hash) VALUES(?, ?)",
-            ("admin", pw_hash),
+            "INSERT INTO admin_users(username, password_hash, created_ts_epoch) VALUES(?, ?, ?)",
+            ("admin", pw_hash, time.time()),
         )
         conn.commit()
 
@@ -327,25 +353,20 @@ def init_admin_user() -> None:
 
 
 def get_validation_rule(topic: str) -> Optional[dict]:
-    """
-    Fetch the validation rule JSON for a given topic, if any.
-    Metadata DB must already exist.
-    Returns None if no rule exists or on error.
-    """
-    conn = sqlite3.connect(config.DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-    row = cur.execute(
-        "SELECT rule_json FROM validation_rules WHERE topic = ?", (topic,)
+    conn = _open_meta_con()
+    row = conn.execute(
+        "SELECT min_value, max_value, enabled FROM validation_rules WHERE topic = ?",
+        (topic,),
     ).fetchone()
     conn.close()
-    if not row:
+
+    if not row or int(row["enabled"] or 0) == 0:
         return None
-    try:
-        import json
-        return json.loads(row["rule_json"])
-    except Exception:
-        return None
+
+    return {
+        "min": row["min_value"],
+        "max": row["max_value"],
+    }
 
 
 def get_retention_policy(top_level: str) -> Optional[int]:
@@ -540,15 +561,13 @@ def enforce_retention_for_topic(top_level: str) -> int:
     conn.close()
     return deleted
 
+
 def meta_touch_topic(topic: str, ts_epoch: float, value_text: str | None, stored: bool) -> None:
     """
     Background-safe metadata update for topic listing/telemetry.
-    - Always updates first_seen/last_seen and increments message_count
-    - Tracks stored vs dropped counts (if columns exist)
-    - Ensures topic_meta row exists
+    Stores epoch floats only.
     """
-    conn = sqlite3.connect(config.DB_PATH)
-    conn.row_factory = sqlite3.Row
+    conn = _open_meta_con()
     cur = conn.cursor()
 
     # Ensure topic_meta exists (public defaults to 1)
@@ -564,57 +583,54 @@ def meta_touch_topic(topic: str, ts_epoch: float, value_text: str | None, stored
     # Upsert stats row and bump counts
     cur.execute(
         """
-        INSERT INTO topic_stats(topic, first_seen, last_seen, message_count, last_value)
-        VALUES(?, ?, ?, 1, ?)
+        INSERT INTO topic_stats(
+            topic,
+            first_seen_ts_epoch,
+            last_seen_ts_epoch,
+            message_count,
+            last_value,
+            stored_count,
+            dropped_count
+        )
+        VALUES(?, ?, ?, 1, ?, ?, ?)
         ON CONFLICT(topic) DO UPDATE SET
-            first_seen = COALESCE(topic_stats.first_seen, excluded.first_seen),
-            last_seen  = excluded.last_seen,
-            message_count = topic_stats.message_count + 1,
-            last_value = excluded.last_value
+            first_seen_ts_epoch = COALESCE(topic_stats.first_seen_ts_epoch, excluded.first_seen_ts_epoch),
+            last_seen_ts_epoch  = excluded.last_seen_ts_epoch,
+            message_count       = topic_stats.message_count + 1,
+            last_value          = excluded.last_value,
+            stored_count        = topic_stats.stored_count + excluded.stored_count,
+            dropped_count       = topic_stats.dropped_count + excluded.dropped_count
         """,
-        (topic, datetime.fromtimestamp(ts_epoch), datetime.fromtimestamp(ts_epoch), value_text),
+        (
+            topic,
+            float(ts_epoch),
+            float(ts_epoch),
+            float(value_text) if value_text not in (None, "") else None,
+            1 if stored else 0,
+            0 if stored else 1,
+        ),
     )
-
-    # Optional counters: stored_count / dropped_count
-    try:
-        if stored:
-            cur.execute(
-                "UPDATE topic_stats SET stored_count = COALESCE(stored_count,0) + 1 WHERE topic=?",
-                (topic,),
-            )
-        else:
-            cur.execute(
-                "UPDATE topic_stats SET dropped_count = COALESCE(dropped_count,0) + 1 WHERE topic=?",
-                (topic,),
-            )
-    except sqlite3.OperationalError:
-        pass
 
     conn.commit()
     conn.close()
+
 
 def meta_get_storage_policy(topic: str) -> dict:
     """
     Background-safe fetch of per-topic storage policy from topic_meta.
     Returns defaults if not present.
     """
-    conn = sqlite3.connect(config.DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
+    conn = _open_meta_con()
+    _ensure_topic_meta_columns(conn)
 
-    try:
-        row = cur.execute(
-            """
-            SELECT store_enabled, max_msgs_per_min, auto_disabled
-            FROM topic_meta
-            WHERE topic=?
-            """,
-            (topic,),
-        ).fetchone()
-    except sqlite3.OperationalError:
-        conn.close()
-        return {"store_enabled": True, "max_msgs_per_min": None, "auto_disabled": False}
-
+    row = conn.execute(
+        """
+        SELECT store_enabled, max_msgs_per_min, auto_disabled
+        FROM topic_meta
+        WHERE topic=?
+        """,
+        (topic,),
+    ).fetchone()
     conn.close()
 
     if not row:
@@ -625,6 +641,7 @@ def meta_get_storage_policy(topic: str) -> dict:
         "max_msgs_per_min": row["max_msgs_per_min"],
         "auto_disabled": bool(row["auto_disabled"]),
     }
+
 
 def data_store_timeseries(topic: str, ts_epoch: float, value: float) -> None:
     """

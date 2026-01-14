@@ -21,21 +21,58 @@ class MetadataStore:
     def __init__(self, db_path: str | None = None):
         self.db_path = db_path or config.DB_PATH
 
-        # timeout + WAL reduces locking problems between Flask and ingest thread
-        self._con = sqlite3.connect(self.db_path, timeout=10.0, check_same_thread=True)
+        self._con = sqlite3.connect(
+            self.db_path,
+            timeout=10.0,
+            check_same_thread=False,
+        )
         self._con.row_factory = sqlite3.Row
 
-        try:
-            self._con.execute("PRAGMA journal_mode=WAL;")
-            self._con.execute("PRAGMA synchronous=NORMAL;")
-            self._con.execute("PRAGMA busy_timeout=5000;")
-        except Exception:
-            pass
+        cur = self._con.cursor()
+        cur.execute("PRAGMA busy_timeout=5000")
+        cur.execute("PRAGMA foreign_keys=ON")
+        cur.execute("PRAGMA journal_mode=WAL")
+        cur.execute("PRAGMA synchronous=NORMAL")
+        cur.execute("PRAGMA wal_autocheckpoint=1000")
+        self._con.commit()
 
-        # cache for policies (future-proof)
+        # Ensure required columns exist for your planned architecture
+        self._ensure_meta_schema()
+
+        # policy cache
         self._policy_cache: dict[str, dict] = {}
         self._policy_cache_ts: float = 0.0
         self._policy_cache_ttl: float = 2.0  # seconds
+
+    def _ensure_meta_schema(self) -> None:
+        """
+        Ensure metadata tables have the columns needed for:
+        - epoch timestamps
+        - stored/dropped counters
+        - per-topic storage policy scaffolding
+        Safe to run on startup.
+        """
+        cur = self._con.cursor()
+
+        # topic_meta policy columns
+        cols = {r["name"] for r in cur.execute("PRAGMA table_info(topic_meta)").fetchall()}
+        if "store_enabled" not in cols:
+            cur.execute("ALTER TABLE topic_meta ADD COLUMN store_enabled INTEGER NOT NULL DEFAULT 1")
+        if "max_msgs_per_min" not in cols:
+            cur.execute("ALTER TABLE topic_meta ADD COLUMN max_msgs_per_min INTEGER")
+        if "auto_disabled" not in cols:
+            cur.execute("ALTER TABLE topic_meta ADD COLUMN auto_disabled INTEGER NOT NULL DEFAULT 0")
+        if "enabled" not in cols:
+            cur.execute("ALTER TABLE topic_meta ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1")
+
+        # topic_stats counters
+        cols = {r["name"] for r in cur.execute("PRAGMA table_info(topic_stats)").fetchall()}
+        if "stored_count" not in cols:
+            cur.execute("ALTER TABLE topic_stats ADD COLUMN stored_count INTEGER NOT NULL DEFAULT 0")
+        if "dropped_count" not in cols:
+            cur.execute("ALTER TABLE topic_stats ADD COLUMN dropped_count INTEGER NOT NULL DEFAULT 0")
+
+        self._con.commit()
 
 
     def close(self) -> None:
@@ -44,19 +81,9 @@ class MetadataStore:
         except Exception:
             pass
 
+
     def record_seen(self, topic: str, ts_epoch: float) -> None:
         cur = self._con.cursor()
-
-        cur.execute(
-            """
-            INSERT INTO topic_stats(topic, message_count, first_seen_ts_epoch, last_seen_ts_epoch)
-            VALUES(?, 0, ?, ?)
-            ON CONFLICT(topic) DO UPDATE SET
-                first_seen_ts_epoch = MIN(topic_stats.first_seen_ts_epoch, excluded.first_seen_ts_epoch),
-                last_seen_ts_epoch  = MAX(topic_stats.last_seen_ts_epoch,  excluded.last_seen_ts_epoch)
-            """,
-            (topic, float(ts_epoch), float(ts_epoch)),
-        )
 
         cur.execute(
             """
@@ -67,44 +94,65 @@ class MetadataStore:
             (topic,),
         )
 
-        self._commit_with_retry()
-
-    def increment_counts(self, topic: str, ts_epoch: float, stored: bool) -> None:
-        cur = self._con.cursor()
-
         cur.execute(
             """
             INSERT INTO topic_stats(topic, message_count, first_seen_ts_epoch, last_seen_ts_epoch)
-            VALUES(?, 1, ?, ?)
+            VALUES(?, 0, ?, ?)
             ON CONFLICT(topic) DO UPDATE SET
-                message_count = topic_stats.message_count + 1,
-                last_seen_ts_epoch = MAX(topic_stats.last_seen_ts_epoch, excluded.last_seen_ts_epoch)
+                first_seen_ts_epoch = COALESCE(topic_stats.first_seen_ts_epoch, excluded.first_seen_ts_epoch),
+                last_seen_ts_epoch  = CASE
+                                        WHEN topic_stats.last_seen_ts_epoch IS NULL THEN excluded.last_seen_ts_epoch
+                                        WHEN excluded.last_seen_ts_epoch > topic_stats.last_seen_ts_epoch THEN excluded.last_seen_ts_epoch
+                                        ELSE topic_stats.last_seen_ts_epoch
+                                    END
             """,
             (topic, float(ts_epoch), float(ts_epoch)),
         )
 
-        try:
-            if stored:
-                cur.execute(
-                    "UPDATE topic_stats SET stored_count = COALESCE(stored_count, 0) + 1 WHERE topic=?",
-                    (topic,),
-                )
-            else:
-                cur.execute(
-                    "UPDATE topic_stats SET dropped_count = COALESCE(dropped_count, 0) + 1 WHERE topic=?",
-                    (topic,),
-                )
-        except sqlite3.OperationalError:
-            pass
+        self._commit_with_retry()
+
+
+    def increment_counts(self, topic: str, ts_epoch: float, stored: bool) -> None:
+        cur = self._con.cursor()
+
+        stored_inc = 1 if stored else 0
+        dropped_inc = 0 if stored else 1
+
+        cur.execute(
+            """
+            INSERT INTO topic_stats(
+                topic,
+                message_count,
+                first_seen_ts_epoch,
+                last_seen_ts_epoch,
+                stored_count,
+                dropped_count
+            )
+            VALUES(?, 1, ?, ?, ?, ?)
+            ON CONFLICT(topic) DO UPDATE SET
+                message_count = topic_stats.message_count + 1,
+                first_seen_ts_epoch = COALESCE(topic_stats.first_seen_ts_epoch, excluded.first_seen_ts_epoch),
+                last_seen_ts_epoch  = CASE
+                                        WHEN topic_stats.last_seen_ts_epoch IS NULL THEN excluded.last_seen_ts_epoch
+                                        WHEN excluded.last_seen_ts_epoch > topic_stats.last_seen_ts_epoch THEN excluded.last_seen_ts_epoch
+                                        ELSE topic_stats.last_seen_ts_epoch
+                                    END,
+                stored_count  = topic_stats.stored_count + excluded.stored_count,
+                dropped_count = topic_stats.dropped_count + excluded.dropped_count
+            """,
+            (topic, float(ts_epoch), float(ts_epoch), stored_inc, dropped_inc),
+        )
 
         self._commit_with_retry()
 
 
-    def get_topic_policy(self, topic: str) -> Optional[dict]:
+    def get_topic_policy(self, topic: str) -> dict:
         """
-        Future-proof policy lookup.
-        For now, this returns {'store_enabled': bool} if column exists,
-        otherwise None (meaning default allow store).
+        Policy lookup with safe defaults.
+        Returned dict always contains:
+        - store_enabled: bool
+        - max_msgs_per_min: int|None
+        - auto_disabled: bool
         """
         now = time.time()
         if (now - self._policy_cache_ts) > self._policy_cache_ttl:
@@ -116,22 +164,33 @@ class MetadataStore:
 
         cur = self._con.cursor()
 
-        # Default allow store. If schema does not include store_enabled yet,
-        # we treat it as not configured.
         try:
             row = cur.execute(
-                "SELECT store_enabled FROM topic_meta WHERE topic=?",
+                """
+                SELECT store_enabled, max_msgs_per_min, auto_disabled
+                FROM topic_meta
+                WHERE topic=?
+                """,
                 (topic,),
             ).fetchone()
         except sqlite3.OperationalError:
-            return None
+            pol = {"store_enabled": True, "max_msgs_per_min": None, "auto_disabled": False}
+            self._policy_cache[topic] = pol
+            return pol
 
         if row is None:
-            return None
+            pol = {"store_enabled": True, "max_msgs_per_min": None, "auto_disabled": False}
+            self._policy_cache[topic] = pol
+            return pol
 
-        pol = {"store_enabled": bool(row["store_enabled"]) if row["store_enabled"] is not None else True}
+        pol = {
+            "store_enabled": bool(row["store_enabled"]) if row["store_enabled"] is not None else True,
+            "max_msgs_per_min": row["max_msgs_per_min"],
+            "auto_disabled": bool(row["auto_disabled"]) if row["auto_disabled"] is not None else False,
+        }
         self._policy_cache[topic] = pol
         return pol
+
 
     def _commit_with_retry(self, attempts: int = 5, base_sleep: float = 0.05) -> None:
         """

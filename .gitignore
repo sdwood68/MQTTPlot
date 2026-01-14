@@ -23,3 +23,6 @@ test/
 
 # vscode enviroment file
 .env
+
+# Runtime / tool-generated cookies
+cookies.txt
