@@ -31,9 +31,8 @@ from version import __version__
 
 from . import config
 from .storage import (
-    get_db, close_db, init_db, record_app_version, init_admin_user,
-    get_validation_rule, get_retention_policy, top_level_topic, 
-    get_data_db, enforce_retention_for_top_level
+    get_meta_db, close_meta_db, init_meta_db, record_app_version, init_admin_user,
+    topic_root, get_data_db, enforce_retention_for_topic, ensure_topic_db
 )
 from .mqtt_client import mqtt_worker, get_status
 from .auth import is_admin
@@ -46,23 +45,35 @@ app = Flask(__name__, template_folder=os.path.join(BASE_DIR, 'templates'),
 app.secret_key = config.SECRET_KEY or secrets.token_hex(32)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode=ASYNC_MODE)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    force=True
-)
-logging.getLogger("werkzeug").setLevel(logging.ERROR)
-logging.getLogger("engineio").setLevel(logging.ERROR)
-logging.getLogger("socketio").setLevel(logging.ERROR)
+# --- MQTT worker lifecycle (do NOT start at import time) ---
+_mqtt_started = False
+_stop_event = None
+_mqtt_thread = None
+
+def start_mqtt_worker() -> None:
+    """Start the MQTT worker thread once (safe to call multiple times)."""
+    global _mqtt_started, _stop_event, _mqtt_thread
+
+    if _mqtt_started:
+        return
+
+    _mqtt_started = True
+    _stop_event = threading.Event()
+
+    _mqtt_thread = threading.Thread(
+        target=mqtt_worker,
+        args=(app, socketio, _stop_event),
+        daemon=True,
+        name="mqtt_worker",
+    )
+    _mqtt_thread.start()
 
 
-print(f"MQTTPlot starting — version {__version__}")
-
-stop_event = threading.Event()
-t = threading.Thread(target=mqtt_worker, 
-                     args=(app, socketio, stop_event,), 
-                     daemon=True)
-t.start()
+# stop_event = threading.Event()
+# t = threading.Thread(target=mqtt_worker, 
+#                      args=(app, socketio, stop_event,), 
+#                      daemon=True)
+# t.start()
 
 def require_admin(): 
     if not is_admin():
@@ -79,107 +90,6 @@ def parse_time(s):
         except:
             raise ValueError('invalid time')
 
-def refresh_topic_stats_for_top_level(top_level: str) -> None:
-    """
-    Recompute topic_stats entries for all topics stored in <config.DATA_DB_DIR>/<top_level>.db
-    using v2 compact schema:
-      - topics(id, topic)
-      - messages(topic_id, ts, value)   # ts is epoch seconds
-
-    Updates the main metadata DB so the UI counts reflect retention purges.
-
-    Canonical columns written:
-      - topic, top_level, message_count, first_seen, last_seen, min_val, max_val
-    """
-    db_path = os.path.join(config.DATA_DB_DIR, f"{top_level}.db")
-    if not os.path.exists(db_path):
-        return
-
-    data_db = sqlite3.connect(db_path)
-    data_db.row_factory = sqlite3.Row
-    ensure_data_db_schema_v2(data_db)
-    cur = data_db.cursor()
-
-    # Aggregate remaining data by full topic via join on topics
-    cur.execute("""
-        SELECT
-            t.topic AS topic,
-            COUNT(*) AS message_count,
-            MIN(m.ts) AS first_seen,
-            MAX(m.ts) AS last_seen,
-            MIN(m.value) AS min_val,
-            MAX(m.value) AS max_val
-        FROM messages m
-        JOIN topics t ON t.id = m.topic_id
-        GROUP BY t.topic
-        ORDER BY t.topic
-    """)
-    rows = cur.fetchall()
-    data_db.close()
-
-    main = get_db()
-
-    # Remove existing stats for this top-level (topics have NO leading slash in your system)
-    prefix = f"{top_level}/%"
-    exact = f"{top_level}"
-    main.execute("DELETE FROM topic_stats WHERE topic LIKE ? OR topic = ?", (prefix, exact))
-
-    # Insert refreshed stats (canonical)
-    for r in rows:
-        topic = r["topic"]
-        main.execute("""
-            INSERT INTO topic_stats(topic, top_level, message_count, first_seen, last_seen, min_val, max_val)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(topic) DO UPDATE SET
-                top_level=excluded.top_level,
-                message_count=excluded.message_count,
-                first_seen=excluded.first_seen,
-                last_seen=excluded.last_seen,
-                min_val=excluded.min_val,
-                max_val=excluded.max_val
-        """, (
-            topic,
-            top_level,
-            int(r["message_count"]),
-            float(r["first_seen"]) if r["first_seen"] is not None else None,
-            float(r["last_seen"]) if r["last_seen"] is not None else None,
-            float(r["min_val"]) if r["min_val"] is not None else None,
-            float(r["max_val"]) if r["max_val"] is not None else None,
-        ))
-
-        # Ensure topic_meta exists for the topic (public defaults to 1)
-        main.execute("""
-            INSERT INTO topic_meta(topic, public)
-            VALUES (?, 1)
-            ON CONFLICT(topic) DO NOTHING
-        """, (topic,))
-
-    main.commit()
-
-
-def ensure_data_db_schema_v2(con: sqlite3.Connection) -> None:
-    cur = con.cursor()
-
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS topics (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            topic TEXT NOT NULL UNIQUE
-        )
-    """)
-
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS messages (
-            topic_id INTEGER NOT NULL,
-            ts INTEGER NOT NULL,      -- epoch seconds
-            value REAL NOT NULL,
-            FOREIGN KEY(topic_id) REFERENCES topics(id)
-        )
-    """)
-
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_topic_ts ON messages(topic_id, ts)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages(ts)")
-
-    con.commit()
 
 @app.get("/api/mqtt/status")
 def api_mqtt_status():
@@ -198,17 +108,22 @@ def api_set_config():
     return jsonify({'status':'ok','config':PLOT_CONFIG})
 
 @app.route("/api/topics")
-def api_topics():
+def api_meta_topics():
+    """
+    Return topic metadata list, with admin filtering.
+    :return: List of topic metadata dicts
+    :rtype: list[dict]
+    """
     admin = is_admin()
-    db = get_db()
+    db = get_meta_db()
 
     sql = """
     SELECT
         s.topic,
         s.message_count AS count,
         COALESCE(m.public, 1) AS public,
-        s.first_seen,
-        s.last_seen
+        s.first_seen_ts_epoch AS first_seen,
+        s.last_seen_ts_epoch AS last_seen
     FROM topic_stats s
     LEFT JOIN topic_meta m ON s.topic = m.topic
     """
@@ -218,8 +133,25 @@ def api_topics():
 
     sql += " ORDER BY s.message_count DESC"
 
-    cur = db.execute(sql)
-    return jsonify([dict(r) for r in cur.fetchall()])
+    rows = db.execute(sql).fetchall()
+
+    def iso_or_none(x):
+        if x is None:
+            return None
+        try:
+            return datetime.fromtimestamp(float(x)).isoformat()
+        except Exception:
+            return None
+
+    out = []
+    for r in rows:
+        d = dict(r)
+        # keep raw epochs if you want, but typical UI wants ISO
+        d["first_seen_iso"] = iso_or_none(d.get("first_seen"))
+        d["last_seen_iso"] = iso_or_none(d.get("last_seen"))
+        out.append(d)
+
+    return jsonify(out)
 
 @app.route('/api/plot_image', methods=['GET'])
 def api_plot_image():
@@ -238,7 +170,7 @@ def api_plot_image():
     if end:
         sql += ' AND ts <= ?'; params.append(parse_time(end))
     sql += ' ORDER BY ts ASC LIMIT ?'; params.append(PLOT_CONFIG['max_points'])
-    cur = get_db().execute(sql, params)
+    cur = get_meta_db().execute(sql, params)
     rows = [{'ts': r['ts'], 'value': r['value']} for r in cur.fetchall()]
     if not rows: return jsonify({'error':'no data'}),404
     x = [r['ts'] for r in rows]; y = [r['value'] for r in rows]
@@ -258,9 +190,6 @@ def api_data():
     if not topic:
         return jsonify({"error": "missing topic"}), 400
 
-    # (keep your visibility checks here)
-
-    # Parse optional start/end (ISO strings)
     start = request.args.get("start")
     end = request.args.get("end")
 
@@ -268,38 +197,33 @@ def api_data():
         if not s:
             return None
         try:
-            # allow epoch numeric too
             if s.isdigit():
-                return int(s)
-            return int(datetime.fromisoformat(s).timestamp())
+                return float(s)
+            return float(datetime.fromisoformat(s).timestamp())
         except Exception:
             return None
 
     start_epoch = to_epoch(start)
     end_epoch = to_epoch(end)
 
-    # Optional limit (if you still support it)
     limit = request.args.get("limit")
     try:
         limit = int(limit) if limit else None
     except Exception:
         limit = None
     if limit is not None:
-        limit = max(1, min(limit, 200000))  # safety cap
+        limit = max(1, min(limit, 200000))
 
-    # Open per-top-level DB
-    tl = top_level_topic(topic)
+    tl = topic_root(topic)
     db_path = os.path.join(config.DATA_DB_DIR, f"{tl}.db")
     if not os.path.exists(db_path):
         return jsonify([])
 
     con = sqlite3.connect(db_path)
     con.row_factory = sqlite3.Row
-    ensure_data_db_schema_v2(con)
+    ensure_topic_db(con)
 
-    # Resolve topic_id
-    cur = con.execute("SELECT id FROM topics WHERE topic=?", (topic,))
-    row = cur.fetchone()
+    row = con.execute("SELECT id FROM topics WHERE topic=?", (topic,)).fetchone()
     if not row:
         con.close()
         return jsonify([])
@@ -310,74 +234,75 @@ def api_data():
     params = [topic_id]
 
     if start_epoch is not None:
-        clauses.append("ts >= ?")
+        clauses.append("ts_epoch >= ?")
         params.append(start_epoch)
     if end_epoch is not None:
-        clauses.append("ts <= ?")
+        clauses.append("ts_epoch <= ?")
         params.append(end_epoch)
 
     where_sql = " AND ".join(clauses)
 
-    sql = f"SELECT ts, value FROM messages WHERE {where_sql} ORDER BY ts ASC"
+    sql = f"SELECT ts_epoch, value FROM messages WHERE {where_sql} ORDER BY ts_epoch ASC"
     if limit is not None:
         sql += " LIMIT ?"
         params.append(limit)
 
-    cur = con.execute(sql, tuple(params))
-    rows = cur.fetchall()
+    rows = con.execute(sql, tuple(params)).fetchall()
     con.close()
 
-    # Convert epoch -> ISO for frontend
     out = []
     for r in rows:
         out.append({
-            "ts": datetime.fromtimestamp(int(r["ts"])).isoformat(),
-            "value": float(r["value"])
+            "ts": datetime.fromtimestamp(float(r["ts_epoch"])).isoformat(),
+            "value": float(r["value"]) if r["value"] is not None else None
         })
     return jsonify(out)
 
-
 @app.route("/api/bounds")
-def api_bounds():
+def api_topic_bounds():
+    """
+    Return min/max timestamp bounds for a given topic.
+    :return: JSON with min_ts and max_ts in ISO format
+    :rtype: dict
+    """
     topic = request.args.get("topic")
     if not topic:
         return jsonify({"error": "missing topic"}), 400
 
-    # (keep your visibility checks here)
-
-    tl = top_level_topic(topic)
+    tl = topic_root(topic)
     db_path = os.path.join(config.DATA_DB_DIR, f"{tl}.db")
     if not os.path.exists(db_path):
         return jsonify({"error": "no data"}), 404
 
     con = sqlite3.connect(db_path)
     con.row_factory = sqlite3.Row
-    ensure_data_db_schema_v2(con)
+    ensure_topic_db(con)
 
-    cur = con.execute("SELECT id FROM topics WHERE topic=?", (topic,))
-    row = cur.fetchone()
+    row = con.execute("SELECT id FROM topics WHERE topic=?", (topic,)).fetchone()
     if not row:
         con.close()
         return jsonify({"error": "no data"}), 404
 
     topic_id = int(row["id"])
 
-    cur = con.execute("SELECT MIN(ts) AS min_ts, MAX(ts) AS max_ts FROM messages WHERE topic_id=?", (topic_id,))
-    r = cur.fetchone()
+    r = con.execute(
+        "SELECT MIN(ts_epoch) AS min_ts, MAX(ts_epoch) AS max_ts FROM messages WHERE topic_id=?",
+        (topic_id,),
+    ).fetchone()
     con.close()
 
     if r["min_ts"] is None or r["max_ts"] is None:
         return jsonify({"error": "no data"}), 404
 
     return jsonify({
-        "min_ts": datetime.fromtimestamp(int(r["min_ts"])).isoformat(),
-        "max_ts": datetime.fromtimestamp(int(r["max_ts"])).isoformat(),
+        "min_ts": datetime.fromtimestamp(float(r["min_ts"])).isoformat(),
+        "max_ts": datetime.fromtimestamp(float(r["max_ts"])).isoformat(),
     })
 
 
 @app.route('/viewer')
 def viewer():
-    db = get_db()
+    db = get_meta_db()
 
     # Safe default + clamp
     DEFAULT_LIMIT = 200
@@ -424,29 +349,24 @@ def api_version():
 @app.route("/admin/login", methods=["GET", "POST"])
 def admin_login_page():
     if request.method == "POST":
-        username = request.form.get("username")
-        password = request.form.get("password")
+        username = (request.form.get("username") or "").strip()
+        password = request.form.get("password") or ""
 
-        db = sqlite3.connect(config.DB_PATH)
-        cur = db.execute(
+        db = get_meta_db()
+        row = db.execute(
             "SELECT password_hash FROM admin_users WHERE username=?",
-            (username,)
-        )
-        row = cur.fetchone()
-        db.close()
+            (username,),
+        ).fetchone()
 
-        if row and check_password_hash(row[0], password):
+        if row and check_password_hash(row["password_hash"], password):
+            session.clear()
             session["is_admin"] = True
             session["admin_user"] = username
             return redirect("/")
 
-        return render_template(
-            "admin_login.html",
-            error="Invalid username or password"
-        )
+        return render_template("admin_login.html", error="Invalid username or password")
 
     return render_template("admin_login.html")
-
 
 @app.route("/admin/logout")
 def admin_logout():
@@ -474,7 +394,7 @@ def admin_delete_topic(topic):
     data_db.close()
 
     # Remove from topic_stats (main DB), keep topic_meta (visibility) unless you prefer to remove it too
-    db = get_db()
+    db = get_meta_db()
     db.execute("DELETE FROM topic_stats WHERE topic = ?", (topic,))
     db.commit()
 
@@ -521,7 +441,7 @@ def admin_topic_visibility():
     topic = data['topic']
     public = 1 if data['public'] else 0
 
-    db = get_db()
+    db = get_meta_db()
     db.execute("""
     INSERT INTO topic_meta(topic, public)
     VALUES (?,?)
@@ -534,7 +454,7 @@ def admin_topic_visibility():
 @app.route("/api/admin/retention", methods=["GET"])
 def admin_get_retention():
     require_admin()
-    db = get_db()
+    db = get_meta_db()
     cur = db.execute("SELECT top_level, max_age_days, max_rows FROM retention_policies ORDER BY top_level")
     return jsonify([dict(r) for r in cur.fetchall()])
 
@@ -561,7 +481,7 @@ def admin_set_retention():
     max_age_days = norm_int(body.get("max_age_days"))
     max_rows = norm_int(body.get("max_rows"))
 
-    db = get_db()
+    db = get_meta_db()
     db.execute("""
         INSERT INTO retention_policies(top_level, max_age_days, max_rows)
         VALUES (?, ?, ?)
@@ -573,7 +493,7 @@ def admin_set_retention():
 
     # Apply immediately so the UI reflects the change without waiting for new MQTT messages
     try:
-        enforce_retention_for_top_level(top_level)
+        enforce_retention_for_topic(top_level)
     except Exception:
         logging.exception("Retention enforcement failed on save for top_level=%s", top_level)
         # Keep returning ok for the save itself; enforcement failures are logged
@@ -589,7 +509,7 @@ def admin_set_retention():
 def admin_get_validation():
     require_admin()
     topic = request.args.get("topic")
-    db = get_db()
+    db = get_meta_db()
     if topic:
         cur = db.execute("SELECT topic, min_value, max_value, enabled FROM validation_rules WHERE topic=?", (topic,))
         row = cur.fetchone()
@@ -618,7 +538,7 @@ def admin_set_validation():
     max_value = norm_float(body.get("max_value"))
     enabled = 1 if bool(body.get("enabled", True)) else 0
 
-    db = get_db()
+    db = get_meta_db()
     db.execute("""
         INSERT INTO validation_rules(topic, min_value, max_value, enabled)
         VALUES (?, ?, ?, ?)
@@ -631,6 +551,12 @@ def admin_set_validation():
 
     return jsonify({"status": "ok", "topic": topic, "min_value": min_value, "max_value": max_value, "enabled": bool(enabled)})
 
+@app.get("/api/admin/whoami")
+def api_admin_whoami():
+    return jsonify({
+        "is_admin": bool(session.get("is_admin")),
+        "admin_user": session.get("admin_user"),
+    })
 
 def main():
     # --- Startup / environment verification ---
@@ -638,6 +564,10 @@ def main():
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
     )
+    # Reduce logging noise from Flask and SocketIO
+    logging.getLogger("werkzeug").setLevel(logging.ERROR)
+    logging.getLogger("engineio").setLevel(logging.ERROR)
+    logging.getLogger("socketio").setLevel(logging.ERROR)
 
     logging.info("MQTTPlot starting — version %s", __version__)
     logging.info("Python executable: %s", sys.executable)
@@ -648,7 +578,6 @@ def main():
     expected_venv_prefix = os.environ.get("MQTTPLOT_VENV_PREFIX")
 
     if expected_venv_prefix:
-        # Normalize slashes and case for Windows paths
         exe = os.path.normcase(os.path.abspath(sys.executable))
         expected = os.path.normcase(os.path.abspath(expected_venv_prefix))
 
@@ -659,15 +588,21 @@ def main():
             )
             sys.exit(1)
     else:
-        # No guard configured; allow normal development workflows
         logging.info("MQTTPLOT_VENV_PREFIX not set — skipping interpreter guard")
 
-    init_db()
+    # --- Initialize metadata DB first ---
+    init_meta_db()
     record_app_version(__version__)
     init_admin_user()
-    # t = threading.Thread(target=mqtt_worker, daemon=True)
-    # t.start()
-    socketio.run(app, host='0.0.0.0', port=config.FLASK_PORT)
+
+    # --- Start MQTT ingest thread (ONLY here) ---
+    if getattr(config, "MQTT_ENABLED", True):
+        start_mqtt_worker()
+    else:
+        logging.info("MQTT_ENABLED=0 — MQTT ingest disabled")
+
+    # --- Start web server ---
+    socketio.run(app, host="0.0.0.0", port=config.FLASK_PORT)
 
 if __name__ == '__main__':
     main()

@@ -25,7 +25,7 @@
         <span>Admin: {{ admin_user }}</span>
         <a href="/logout">Logout</a>
         {% else %}
-        <a href="/login">Admin Login</a>
+        <a href="{{ url_for('admin_login_page') }}">Admin Login</a>
         {% endif %}
       </div>
     </div>
