@@ -82,9 +82,33 @@ class MetadataStore:
             pass
 
 
-    def record_seen(self, topic: str, ts_epoch: float) -> None:
+    def meta_observe_message(
+        self,
+        topic: str,
+        ts_epoch: float,
+        *,
+        stored: bool,
+        last_value: float | None = None,
+        last_payload_text: str | None = None,
+    ) -> None:
+        """
+        Atomically update metadata for one observed MQTT message.
+
+        Effects (single transaction):
+        - Ensures topic_meta row exists (default public=1)
+        - Upserts topic_stats:
+            * first_seen_ts_epoch (set once)
+            * last_seen_ts_epoch (always moves forward)
+            * message_count (+1)
+            * last_value (optional; only if numeric provided)
+        - Optional counters:
+            * stored_count (+1) if stored=True
+            * dropped_count (+1) if stored=False
+            (only applied if those columns exist)
+        """
         cur = self._con.cursor()
 
+        # Ensure topic_meta exists (public defaults to 1)
         cur.execute(
             """
             INSERT INTO topic_meta(topic, public)
@@ -94,30 +118,8 @@ class MetadataStore:
             (topic,),
         )
 
-        cur.execute(
-            """
-            INSERT INTO topic_stats(topic, message_count, first_seen_ts_epoch, last_seen_ts_epoch)
-            VALUES(?, 0, ?, ?)
-            ON CONFLICT(topic) DO UPDATE SET
-                first_seen_ts_epoch = COALESCE(topic_stats.first_seen_ts_epoch, excluded.first_seen_ts_epoch),
-                last_seen_ts_epoch  = CASE
-                                        WHEN topic_stats.last_seen_ts_epoch IS NULL THEN excluded.last_seen_ts_epoch
-                                        WHEN excluded.last_seen_ts_epoch > topic_stats.last_seen_ts_epoch THEN excluded.last_seen_ts_epoch
-                                        ELSE topic_stats.last_seen_ts_epoch
-                                    END
-            """,
-            (topic, float(ts_epoch), float(ts_epoch)),
-        )
-
-        self._commit_with_retry()
-
-
-    def increment_counts(self, topic: str, ts_epoch: float, stored: bool) -> None:
-        cur = self._con.cursor()
-
-        stored_inc = 1 if stored else 0
-        dropped_inc = 0 if stored else 1
-
+        # Base upsert for stats: first_seen set once, last_seen always updated, count increments
+        # last_value is only set if provided (numeric); otherwise keep prior.
         cur.execute(
             """
             INSERT INTO topic_stats(
@@ -125,26 +127,42 @@ class MetadataStore:
                 message_count,
                 first_seen_ts_epoch,
                 last_seen_ts_epoch,
-                stored_count,
-                dropped_count
+                last_value
             )
-            VALUES(?, 1, ?, ?, ?, ?)
+            VALUES(?, 1, ?, ?, ?)
             ON CONFLICT(topic) DO UPDATE SET
                 message_count = topic_stats.message_count + 1,
                 first_seen_ts_epoch = COALESCE(topic_stats.first_seen_ts_epoch, excluded.first_seen_ts_epoch),
                 last_seen_ts_epoch  = CASE
-                                        WHEN topic_stats.last_seen_ts_epoch IS NULL THEN excluded.last_seen_ts_epoch
-                                        WHEN excluded.last_seen_ts_epoch > topic_stats.last_seen_ts_epoch THEN excluded.last_seen_ts_epoch
-                                        ELSE topic_stats.last_seen_ts_epoch
-                                    END,
-                stored_count  = topic_stats.stored_count + excluded.stored_count,
-                dropped_count = topic_stats.dropped_count + excluded.dropped_count
+                    WHEN topic_stats.last_seen_ts_epoch IS NULL THEN excluded.last_seen_ts_epoch
+                    WHEN excluded.last_seen_ts_epoch > topic_stats.last_seen_ts_epoch THEN excluded.last_seen_ts_epoch
+                    ELSE topic_stats.last_seen_ts_epoch
+                END,
+                last_value = CASE
+                    WHEN excluded.last_value IS NOT NULL THEN excluded.last_value
+                    ELSE topic_stats.last_value
+                END
             """,
-            (topic, float(ts_epoch), float(ts_epoch), stored_inc, dropped_inc),
+            (topic, float(ts_epoch), float(ts_epoch), last_value),
         )
 
-        self._commit_with_retry()
+        # Optional counters (only if columns exist)
+        try:
+            if stored:
+                cur.execute(
+                    "UPDATE topic_stats SET stored_count = COALESCE(stored_count, 0) + 1 WHERE topic=?",
+                    (topic,),
+                )
+            else:
+                cur.execute(
+                    "UPDATE topic_stats SET dropped_count = COALESCE(dropped_count, 0) + 1 WHERE topic=?",
+                    (topic,),
+                )
+        except sqlite3.OperationalError:
+            pass
 
+        self._commit_with_retry()
+    
 
     def get_topic_policy(self, topic: str) -> dict:
         """

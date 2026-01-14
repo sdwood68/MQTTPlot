@@ -70,18 +70,24 @@ class IngestService:
         # Parse value (float) if possible
         value = parse_topic_value(payload)
 
-        # Always record the topic was seen (supports UI even when storage disabled)
-        self.meta.record_seen(topic, ts_epoch)
-
+        # Decide policy (UI disable / future rate limiting)
         decision, reason = self.policy.decide(topic, ts_epoch)
 
         stored = False
+
+        # STORE means: store numeric timeseries if possible
         if decision == StoreDecision.STORE and value is not None:
-            # Store time series
             self.data.store_timeseries(topic, ts_epoch, value)
             stored = True
 
-        # Always increment counts; track stored vs dropped (future-proof for UI)
-        self.meta.increment_counts(topic, ts_epoch, stored=stored)
+        # DROP_STORE means: do NOT store timeseries, but still record metadata telemetry
+        # DROP_ALL means: drop everything (including metadata)
+        if decision != StoreDecision.DROP_ALL:
+            self.meta.meta_observe_message(
+                topic,
+                ts_epoch,
+                stored=stored,
+                last_value=value if value is not None else None,
+            )
 
         return IngestResult(decision=decision, reason=reason, value=value)
