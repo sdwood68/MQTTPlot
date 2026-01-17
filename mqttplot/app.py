@@ -511,6 +511,34 @@ def admin_public_plots_list():
     return jsonify([dict(r) for r in cur.fetchall()])
 
 
+@app.route('/api/admin/public_plots/<slug>', methods=['GET'])
+def admin_public_plots_get(slug: str):
+    """Get a public plot definition (admin, includes spec_json)."""
+    require_admin()
+    db = get_meta_db()
+    row = db.execute(
+        "SELECT slug, title, description, spec_json, published, created_ts_epoch, updated_ts_epoch FROM public_plots WHERE slug=?",
+        (slug,),
+    ).fetchone()
+    if not row:
+        abort(404)
+
+    try:
+        spec = json.loads(row['spec_json'])
+    except Exception:
+        spec = {}
+
+    return jsonify({
+        'slug': row['slug'],
+        'title': row['title'],
+        'description': row['description'],
+        'published': bool(row['published']),
+        'created_ts_epoch': row['created_ts_epoch'],
+        'updated_ts_epoch': row['updated_ts_epoch'],
+        'spec': spec,
+    })
+
+
 @app.route('/api/admin/public_plots', methods=['POST'])
 def admin_public_plots_upsert():
     require_admin()

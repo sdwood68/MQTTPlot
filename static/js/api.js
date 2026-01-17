@@ -95,6 +95,10 @@ export async function listAdminPublicPlots() {
   return fetchJson('/api/admin/public_plots');
 }
 
+export async function getAdminPublicPlot(slug) {
+  return fetchJson(`/api/admin/public_plots/${encodeURIComponent(slug)}`);
+}
+
 export async function saveAdminPublicPlot(payload) {
   return fetchJson('/api/admin/public_plots', {
     method: 'POST',

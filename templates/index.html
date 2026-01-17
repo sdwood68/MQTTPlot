@@ -130,11 +130,29 @@
           <label>Title:
             <input id="pp_title" placeholder="Display title (optional)">
           </label>
-        </div>
-        <div style="margin-top:6px;">
-          <label>Topics (comma-separated):
-            <input id="pp_topics" placeholder="/watergauge/temp1,/watergauge/temp2" style="width: 520px;">
+          <label>Description:
+            <input id="pp_description" placeholder="Optional description" style="width: 360px;">
           </label>
+        </div>
+        <div style="margin-top:10px;">
+          <b>Topics</b>
+          <div style="margin-top:6px;">
+            <table id="pp_topics_table" style="border-collapse: collapse; width: 100%; max-width: 980px;">
+              <thead>
+                <tr>
+                  <th style="text-align:left; padding: 4px;">Topic</th>
+                  <th style="text-align:left; padding: 4px;">Label</th>
+                  <th style="text-align:left; padding: 4px;">Y Axis</th>
+                  <th style="text-align:left; padding: 4px;">Mode</th>
+                  <th style="text-align:left; padding: 4px;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="pp_topics_tbody"></tbody>
+            </table>
+          </div>
+          <div style="margin-top:6px;">
+            <button id="btnAddPublicPlotTopic">Add topic</button>
+          </div>
         </div>
         <div style="margin-top:6px;">
           <label>Default range (seconds):
@@ -145,6 +163,7 @@
           </label>
           <button id="btnSavePublicPlot" style="margin-left:10px;">Save</button>
           <button id="btnRefreshPublicPlots">Refresh list</button>
+          <button id="btnClearPublicPlot" style="margin-left:10px;">Clear</button>
         </div>
         <pre id="public_plots_status"></pre>
         <div id="public_plots_list"></div>

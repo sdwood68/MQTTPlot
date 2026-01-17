@@ -2,7 +2,7 @@ import { initMqttStatusPolling } from './mqtt_status.js';
 import { loadTopics } from './admin/topics_ui.js';
 import { SingleTopicPlot } from './admin/plot_single.js';
 import { sendOTAFromInputs, saveRetentionFromInputs } from './admin/ota_retention.js';
-import { refreshPublicPlots, savePublicPlotFromInputs } from './admin/public_plots_ui.js';
+import { refreshPublicPlots, savePublicPlotFromInputs, initPublicPlotsUI } from './admin/public_plots_ui.js';
 
 // Admin entrypoint: wires UI, socket.io, and periodic refresh.
 
@@ -56,6 +56,9 @@ document.addEventListener('DOMContentLoaded', () => {
     refreshPublicPlots();
   });
 
+  // Public plots structured editor
+  initPublicPlotsUI();
+
   // --- Topics list load + periodic refresh ---
   const refreshTopics = () => loadTopics({
     onSelectTopic: (topic) => {
@@ -69,6 +72,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- Public plot list ---
   if (document.getElementById('public_plots_list')) {
+    initPublicPlotsUI();
     refreshPublicPlots();
   }
 });
