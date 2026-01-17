@@ -557,11 +557,19 @@ async function saveRetention() {
     return;
   }
 
-  const res = await fetch('/api/admin/retention', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ top_level, max_age_days, max_rows })
-  });
+  let res;
+  try {
+    const applyRes = await fetch('/api/admin/retention/apply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ top_level })
+    });
+    if (!applyRes.ok) {
+      console.warn("Retention apply failed:", applyRes.status);
+    }
+  } catch (e) {
+    console.warn("Retention apply request error:", e);
+  }
 
   const text = await res.text();
 
@@ -575,90 +583,11 @@ async function saveRetention() {
 
   statusEl.textContent = JSON.stringify(js, null, 2);
 
-  // Note: server applies enforcement immediately on save.
-}
-
-/* Public Plot URLs (slug-based) */
-async function refreshPublicPlots() {
-  const statusEl = document.getElementById('public_plots_status');
-  const listEl = document.getElementById('public_plots_list');
-  if (!listEl) return;
-
-  listEl.innerHTML = '';
-  if (statusEl) statusEl.textContent = '';
-
-  const res = await fetch('/api/admin/public_plots');
-  if (!res.ok) {
-    if (statusEl) statusEl.textContent = `Error: ${res.status} ${res.statusText}`;
-    return;
-  }
-  const plots = await res.json();
-
-  const ul = document.createElement('ul');
-  for (const p of plots) {
-    const li = document.createElement('li');
-    const a = document.createElement('a');
-    a.href = `/p/${p.slug}`;
-    a.textContent = p.title ? `${p.title} (/p/${p.slug})` : `/p/${p.slug}`;
-    a.target = '_blank';
-    li.appendChild(a);
-
-    const meta = document.createElement('span');
-    meta.style.marginLeft = '10px';
-    meta.style.opacity = '0.85';
-    meta.textContent = p.published ? 'published' : 'unpublished';
-    li.appendChild(meta);
-
-    const del = document.createElement('button');
-    del.textContent = 'Delete';
-    del.style.marginLeft = '10px';
-    del.onclick = async () => {
-      if (!confirm(`Delete public plot "${p.slug}"?`)) return;
-      const r2 = await fetch(`/api/admin/public_plots/${encodeURIComponent(p.slug)}`, { method: 'DELETE' });
-      if (!r2.ok) alert(`Delete failed: ${r2.status}`);
-      await refreshPublicPlots();
-    };
-    li.appendChild(del);
-
-    ul.appendChild(li);
-  }
-  listEl.appendChild(ul);
-}
-
-async function savePublicPlot() {
-  const statusEl = document.getElementById('public_plots_status');
-  const slug = (document.getElementById('pp_slug')?.value || '').trim();
-  const title = (document.getElementById('pp_title')?.value || '').trim();
-  const topicsText = (document.getElementById('pp_topics')?.value || '').trim();
-  const rangeSec = parseInt(document.getElementById('pp_range_sec')?.value || '3600', 10);
-  const published = !!document.getElementById('pp_published')?.checked;
-
-  if (!slug) {
-    if (statusEl) statusEl.textContent = 'Error: slug is required.';
-    return;
-  }
-  const topics = topicsText
-    ? topicsText.split(',').map(s => s.trim()).filter(Boolean)
-    : [];
-
-  const spec = {
-    title: title || null,
-    topics: topics.map(t => ({ name: t, label: null, yAxis: 'y', mode: 'lines' })),
-    time: { kind: 'relative', seconds: isFinite(rangeSec) && rangeSec > 0 ? rangeSec : 3600 },
-    refresh: { enabled: true, intervalMs: 5000 }
-  };
-
-  const res = await fetch('/api/admin/public_plots', {
+  await fetch('/api/admin/retention/apply', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ slug, title: title || null, published, spec })
+    body: JSON.stringify({ top_level })
   });
-
-  const text = await res.text();
-  let js;
-  try { js = JSON.parse(text); } catch { js = { http_status: res.status, raw_response: text.slice(0, 500) }; }
-  if (statusEl) statusEl.textContent = JSON.stringify(js, null, 2);
-  if (res.ok) await refreshPublicPlots();
 }
 
 
@@ -713,9 +642,10 @@ async function refreshMqttStatus() {
 document.addEventListener("DOMContentLoaded", () => {
   refreshMqttStatus();
   setInterval(refreshMqttStatus, 5000);
-
-  // Admin-only: load public plot list if the section exists
-  if (document.getElementById('public_plots_list')) {
-    refreshPublicPlots();
-  }
 });
+
+label.onclick = () => {
+  document.getElementById('topicInput').value = t.topic;
+  boundsCache[t.topic] = undefined; // force refresh bounds on selection
+  plot();
+};

@@ -313,6 +313,22 @@ def init_meta_db() -> None:
         """
     )
 
+    # Slug-based, admin-managed public plot definitions.
+    # spec_json is a PlotSpec-like JSON object (topics[], time{}, refresh{}, etc.).
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS public_plots (
+            slug TEXT PRIMARY KEY,
+            title TEXT,
+            description TEXT,
+            spec_json TEXT NOT NULL,
+            published INTEGER NOT NULL DEFAULT 0,
+            created_ts_epoch REAL NOT NULL,
+            updated_ts_epoch REAL NOT NULL
+        )
+        """
+    )
+
     conn.commit()
     conn.close()
 
@@ -381,14 +397,14 @@ def get_retention_policy(top_level: str) -> Optional[int]:
     :return: Description
     :rtype: int | None
     """
-    conn = sqlite3.connect(config.DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-    row = cur.execute(
-        "SELECT days FROM retention_policies WHERE top_level = ?", (top_level,)
+    # Retention policies live in the metadata DB and use max_age_days.
+    conn = _open_meta_con()
+    row = conn.execute(
+        "SELECT max_age_days FROM retention_policies WHERE top_level = ?",
+        (top_level,),
     ).fetchone()
     conn.close()
-    return int(row["days"]) if row else None
+    return int(row["max_age_days"]) if row and row["max_age_days"] is not None else None
 
 
 def parse_topic_value(payload_text) -> Optional[float]:

@@ -9,7 +9,9 @@
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 
     <link rel="stylesheet" href="/static/mqttplot.css">
+    {% if admin %}
     <script src="/static/mqttplot.js" defer></script>
+    {% endif %}
 </head>
 
 <body class="{{ 'admin' if admin else '' }}" data-admin="{{ 'true' if admin else 'false' }}">
@@ -20,10 +22,9 @@
       </div>
 
       <div id="admin-bar">
-        <!-- keep your existing admin bar contents exactly as-is -->
         {% if admin %}
         <span>Admin: {{ admin_user }}</span>
-        <a href="/logout">Logout</a>
+        <a href="/admin/logout">Logout</a>
         {% else %}
         <a href="{{ url_for('admin_login_page') }}">Admin Login</a>
         {% endif %}
@@ -39,42 +40,54 @@
     </div>
     {% endif %}
 
-    <h3>Topics</h3>
-    <div id="topics"></div>
+    {% if admin %}
+      <h3>Topics</h3>
+      <div id="topics"></div>
 
-    <h3>Plot Data</h3>
-    <label>Topic:
-        <input id="topicInput" list="topiclist">
-    </label>
-    <!-- Start time remains optional for manual entry -->
-    <label>From:
-        <input id="start" placeholder="ISO time or epoch (optional)">
-    </label>
+      <h3>Plot Data</h3>
+      <label>Topic:
+          <input id="topicInput" list="topiclist">
+      </label>
+      <!-- Start time remains optional for manual entry -->
+      <label>From:
+          <input id="start" placeholder="ISO time or epoch (optional)">
+      </label>
 
-    <!-- End time is no longer user-controlled; keep hidden for internal windowing -->
-    <input id="end" type="hidden" value="">
+      <!-- End time is no longer user-controlled; keep hidden for internal windowing -->
+      <input id="end" type="hidden" value="">
 
-    <button onclick="plot()">Plot</button>
+      <button onclick="plot()">Plot</button>
 
-    <!-- v0.6.0 plot window controls -->
-    <div style="margin-top: 8px;">
-        <button id="btnBack" onclick="slideWindow(-0.5)">◀ Back 50%</button>
-        <button id="btnFwd" onclick="slideWindow(0.5)">Forward 50% ▶</button>
-        <button id="btnZoomIn" onclick="zoomIn()">Zoom In</button>
-        <button id="btnZoomOut" onclick="zoomOut()">Zoom Out</button>
-    </div>
+      <!-- v0.6.0 plot window controls -->
+      <div style="margin-top: 8px;">
+          <button id="btnBack" onclick="slideWindow(-0.5)">◀ Back 50%</button>
+          <button id="btnFwd" onclick="slideWindow(0.5)">Forward 50% ▶</button>
+          <button id="btnZoomIn" onclick="zoomIn()">Zoom In</button>
+          <button id="btnZoomOut" onclick="zoomOut()">Zoom Out</button>
+      </div>
 
-
-    <datalist id="topiclist"></datalist>
-    <div id="plot"></div>
+      <datalist id="topiclist"></datalist>
+      <div id="plot"></div>
+    {% else %}
+      <h3>Published Plots</h3>
+      {% if public_plots and public_plots|length > 0 %}
+        <ul>
+          {% for p in public_plots %}
+            <li><a href="/p/{{ p.slug }}">{{ p.title or p.slug }}</a></li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p>No published plots are currently available.</p>
+      {% endif %}
+    {% endif %}
 
     {% if admin %}
-    <div class="admin-box">
-        <h3>OTA Control</h3>
-        <input id="otaBase" placeholder="Base topic (e.g. watergauge)">
-        <button onclick="sendOTA(1)">Enter OTA</button>
-        <button onclick="sendOTA(0)">Exit OTA</button>
-    </div>
+      <div class="admin-box">
+          <h3>OTA Control</h3>
+          <input id="otaBase" placeholder="Base topic (e.g. watergauge)">
+          <button onclick="sendOTA(1)">Enter OTA</button>
+          <button onclick="sendOTA(0)">Exit OTA</button>
+      </div>
     {% endif %}
 
     {% if admin %}
@@ -98,6 +111,42 @@
         </div>
         <pre id="retention_status"></pre>
         <hr>
+    </div>
+    {% endif %}
+
+    {% if admin %}
+    <hr>
+    <div class="admin-box">
+        <h3>Public Plot URLs</h3>
+        <p>
+          Create a published plot and share the URL <code>/p/&lt;slug&gt;</code>.
+          Only published plots are visible to non-admin users.
+        </p>
+        <div>
+          <label>Slug:
+            <input id="pp_slug" placeholder="e.g. watergauge-temps">
+          </label>
+          <label>Title:
+            <input id="pp_title" placeholder="Display title (optional)">
+          </label>
+        </div>
+        <div style="margin-top:6px;">
+          <label>Topics (comma-separated):
+            <input id="pp_topics" placeholder="/watergauge/temp1,/watergauge/temp2" style="width: 520px;">
+          </label>
+        </div>
+        <div style="margin-top:6px;">
+          <label>Default range (seconds):
+            <input id="pp_range_sec" type="number" min="60" value="3600">
+          </label>
+          <label style="margin-left:10px;">
+            <input id="pp_published" type="checkbox" checked> Published
+          </label>
+          <button onclick="savePublicPlot()" style="margin-left:10px;">Save</button>
+          <button onclick="refreshPublicPlots()">Refresh list</button>
+        </div>
+        <pre id="public_plots_status"></pre>
+        <div id="public_plots_list"></div>
     </div>
     {% endif %}
 </body>

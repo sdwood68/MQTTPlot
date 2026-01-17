@@ -37,6 +37,15 @@ from .storage import (
 from .mqtt_client import mqtt_worker, get_status
 from .auth import is_admin
 
+import re
+
+SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+def is_valid_slug(slug: str) -> bool:
+    if not slug or len(slug) < 3 or len(slug) > 64:
+        return False
+    return bool(SLUG_RE.match(slug))
+
 PLOT_CONFIG = config.PLOT_CONFIG
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -192,21 +201,8 @@ def api_data():
 
     start = request.args.get("start")
     end = request.args.get("end")
-
-    def to_epoch(s: str):
-        if not s:
-            return None
-        try:
-            if s.isdigit():
-                return float(s)
-            return float(datetime.fromisoformat(s).timestamp())
-        except Exception:
-            return None
-
-    start_epoch = to_epoch(start)
-    end_epoch = to_epoch(end)
-
     limit = request.args.get("limit")
+
     try:
         limit = int(limit) if limit else None
     except Exception:
@@ -214,10 +210,29 @@ def api_data():
     if limit is not None:
         limit = max(1, min(limit, 200000))
 
+    return jsonify(_fetch_timeseries(topic, start, end, limit))
+
+
+def _to_epoch(s: str | None):
+    if not s:
+        return None
+    try:
+        if str(s).isdigit():
+            return float(s)
+        return float(datetime.fromisoformat(s).timestamp())
+    except Exception:
+        return None
+
+
+def _fetch_timeseries(topic: str, start: str | None, end: str | None, limit: int | None) -> list[dict]:
+    """Fetch timeseries points for a topic from the per-top-level DB."""
+    start_epoch = _to_epoch(start)
+    end_epoch = _to_epoch(end)
+
     tl = topic_root(topic)
     db_path = os.path.join(config.DATA_DB_DIR, f"{tl}.db")
     if not os.path.exists(db_path):
-        return jsonify([])
+        return []
 
     con = sqlite3.connect(db_path)
     con.row_factory = sqlite3.Row
@@ -226,10 +241,9 @@ def api_data():
     row = con.execute("SELECT id FROM topics WHERE topic=?", (topic,)).fetchone()
     if not row:
         con.close()
-        return jsonify([])
+        return []
 
     topic_id = int(row["id"])
-
     clauses = ["topic_id=?"]
     params = [topic_id]
 
@@ -241,7 +255,6 @@ def api_data():
         params.append(end_epoch)
 
     where_sql = " AND ".join(clauses)
-
     sql = f"SELECT ts_epoch, value FROM messages WHERE {where_sql} ORDER BY ts_epoch ASC"
     if limit is not None:
         sql += " LIMIT ?"
@@ -254,9 +267,9 @@ def api_data():
     for r in rows:
         out.append({
             "ts": datetime.fromtimestamp(float(r["ts_epoch"])).isoformat(),
-            "value": float(r["value"]) if r["value"] is not None else None
+            "value": float(r["value"]) if r["value"] is not None else None,
         })
-    return jsonify(out)
+    return out
 
 @app.route("/api/bounds")
 def api_topic_bounds():
@@ -375,12 +388,176 @@ def admin_logout():
 
 @app.route('/')
 def index():
+    admin = is_admin()
+    public_plots = []
+    if not admin:
+        db = get_meta_db()
+        cur = db.execute(
+            "SELECT slug, title FROM public_plots WHERE published=1 ORDER BY slug"
+        )
+        public_plots = [dict(r) for r in cur.fetchall()]
+
     return render_template(
         "index.html",
         broker=f"{config.MQTT_BROKER}:{config.MQTT_PORT}",
-        admin=is_admin(),
-        admin_user=session.get("admin_user")
+        admin=admin,
+        admin_user=session.get("admin_user"),
+        public_plots=public_plots,
     )
+
+
+@app.route('/p/<slug>')
+def public_plot_page(slug: str):
+    """Public (unauthenticated) plot page. slug-based."""
+    db = get_meta_db()
+    row = db.execute(
+        "SELECT slug, title, description, published FROM public_plots WHERE slug=?",
+        (slug,),
+    ).fetchone()
+    if not row or int(row['published'] or 0) != 1:
+        abort(404)
+
+    return render_template(
+        'public_plot.html',
+        slug=row['slug'],
+        title=row['title'],
+        description=row['description'],
+    )
+
+
+@app.route('/api/public/plots')
+def api_public_plots_list():
+    """List published plots (public)."""
+    db = get_meta_db()
+    cur = db.execute(
+        "SELECT slug, title, description FROM public_plots WHERE published=1 ORDER BY slug"
+    )
+    return jsonify([dict(r) for r in cur.fetchall()])
+
+
+@app.route('/api/public/plots/<slug>')
+def api_public_plot_get(slug: str):
+    """Get a published plot spec by slug (public)."""
+    db = get_meta_db()
+    row = db.execute(
+        "SELECT slug, title, description, spec_json, published FROM public_plots WHERE slug=?",
+        (slug,),
+    ).fetchone()
+    if not row or int(row['published'] or 0) != 1:
+        abort(404)
+
+    try:
+        spec = json.loads(row['spec_json'])
+    except Exception:
+        spec = {}
+
+    return jsonify({
+        'slug': row['slug'],
+        'title': row['title'],
+        'description': row['description'],
+        'spec': spec,
+    })
+
+
+@app.route('/api/public/data')
+def api_public_data():
+    """Fetch topic data for a published plot. Enforces slug/topic association."""
+    slug = request.args.get('slug')
+    topic = request.args.get('topic')
+    if not slug or not topic:
+        return jsonify({'error': 'missing slug or topic'}), 400
+
+    db = get_meta_db()
+    row = db.execute(
+        "SELECT spec_json, published FROM public_plots WHERE slug=?",
+        (slug,),
+    ).fetchone()
+    if not row or int(row['published'] or 0) != 1:
+        return jsonify({'error': 'plot not found'}), 404
+
+    try:
+        spec = json.loads(row['spec_json'])
+    except Exception:
+        return jsonify({'error': 'invalid plot spec'}), 500
+
+    topics = set()
+    for t in (spec.get('topics') or []):
+        if isinstance(t, dict) and t.get('name'):
+            topics.add(t['name'])
+
+    if topic not in topics:
+        return jsonify({'error': 'topic not allowed for this plot'}), 403
+
+    start = request.args.get('start')
+    end = request.args.get('end')
+    limit = request.args.get('limit')
+    try:
+        limit = int(limit) if limit else None
+    except Exception:
+        limit = None
+    if limit is not None:
+        limit = max(1, min(limit, 200000))
+
+    return jsonify(_fetch_timeseries(topic, start, end, limit))
+
+
+@app.route('/api/admin/public_plots', methods=['GET'])
+def admin_public_plots_list():
+    require_admin()
+    db = get_meta_db()
+    cur = db.execute(
+        "SELECT slug, title, description, published, created_ts_epoch, updated_ts_epoch FROM public_plots ORDER BY slug"
+    )
+    return jsonify([dict(r) for r in cur.fetchall()])
+
+
+@app.route('/api/admin/public_plots', methods=['POST'])
+def admin_public_plots_upsert():
+    require_admin()
+    body = request.get_json(force=True) or {}
+    slug = (body.get('slug') or '').strip()
+    title = body.get('title')
+    description = body.get('description')
+    published = 1 if body.get('published') else 0
+    spec = body.get('spec') or {}
+
+    if not is_valid_slug(slug):
+        return jsonify({'error': 'invalid slug', 'hint': 'Use lowercase letters/numbers and hyphens only (3-64 chars).'}), 400
+
+    try:
+        spec_json = json.dumps(spec)
+    except Exception:
+        return jsonify({'error': 'spec must be JSON-serializable'}), 400
+
+    now = time.time()
+    db = get_meta_db()
+
+    # Upsert
+    db.execute(
+        """
+        INSERT INTO public_plots(slug, title, description, spec_json, published, created_ts_epoch, updated_ts_epoch)
+        VALUES(?,?,?,?,?,?,?)
+        ON CONFLICT(slug) DO UPDATE SET
+            title=excluded.title,
+            description=excluded.description,
+            spec_json=excluded.spec_json,
+            published=excluded.published,
+            updated_ts_epoch=excluded.updated_ts_epoch
+        """,
+        (slug, title, description, spec_json, published, now, now),
+    )
+    db.commit()
+
+    return jsonify({'status': 'ok', 'slug': slug, 'published': bool(published)})
+
+
+@app.route('/api/admin/public_plots/<slug>', methods=['DELETE'])
+def admin_public_plots_delete(slug: str):
+    require_admin()
+    db = get_meta_db()
+    cur = db.execute("DELETE FROM public_plots WHERE slug=?", (slug,))
+    db.commit()
+    return jsonify({'status': 'ok', 'deleted': cur.rowcount})
 
 @app.route("/api/admin/topic/<path:topic>", methods=["DELETE"])
 def admin_delete_topic(topic):
