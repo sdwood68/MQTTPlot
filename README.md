@@ -1,434 +1,296 @@
 # MQTTPlot
 
-MQTTPlot is a lightweight, self-hosted web application for visualizing time-series data published to MQTT topics. It is designed for local monitoring, experimentation, and embedded/IoT projects where a full metrics stack would be
-overkill.
+**MQTTPlot** is a lightweight MQTT data ingestion and visualization service designed for long-running IoT and telemetry systems. It subscribes to MQTT topics, persists time-series data to SQLite, and serves interactive Plotly-based graphs via a web interface.
 
-**MQTT → SQLite → Flask + SocketIO + Plotly Dashboard**
-
-**MQTTPlot** provides both:
-- A **real-time web dashboard** (using Flask, Socket.IO, and Plotly)
-- A **RESTful API** for querying, configuring, and exporting plots (PNG/JSON)
-
-
-## 🚀 Features
-✅ Subscribe to MQTT topics (configurable via environment variables)  
-✅ Store all messages in SQLite  
-✅ Live Plotly dashboard with auto-updates via WebSocket  
-✅ REST API for fetching data, updating config, and exporting plots  
-✅ Export interactive Plotly JSON or static PNG images  
-✅ Simple setup with Docker support  
+Version **0.7.0** introduces **public, slug-based plot URLs**, **multi-topic plotting**, and **embeddable plot views**, enabling MQTTPlot to act as a read-only visualization endpoint without exposing internal configuration.
 
 ---
 
+## Key Features
 
-## Roadmap status
+### Core
+- MQTT subscription with wildcard topic support
+- Persistent SQLite storage per topic
+- Automatic database creation and schema management
+- Time-windowed queries optimized for plotting
 
-The authoritative plan is maintained in **ROADMAP.md**.
+### Plotting & UI
+- Interactive Plotly graphs
+- Multi-topic plots (multiple series per chart)
+- Dual Y-axis support with aligned major units
+- In-plot navigation and controls
+- Preview thumbnails for plots
 
-Implemented milestone highlights:
-- **0.6.0 (delivered via 0.6.1):** interactive time-window navigation (zoom/slide) and persistent storage per top-level MQTT topic
-- **0.6.2 (planned):** code cleaning, review, and reorganization focused on maintainability and testability
+### Public Access (New in 0.7.0)
+- Slug-based public plot URLs
+- Read-only embedded plot views
+- No exposure of MQTT topics, database paths, or credentials
+- Suitable for dashboards, iframes, and wall displays
+
+### Administration
+- Admin-only configuration views
+- Topic-to-plot mapping control
+- Plot metadata management (titles, units, axes)
+- Separation of admin and public concerns
 
 
-## 📦 Requirements
-- Python 3.9+
-- MQTT broker (e.g., Mosquitto)
-- Optional: Docker for containerized deployment
+## Architecture Overview
+
+MQTTPlot consists of four layers:
+1) **Ingestion** (MQTT client subscribes to topics)
+2) **Persistence** (SQLite stores time-series samples)
+3) **Plot definitions** (metadata describing what/how to graph)
+4) **Presentation** (admin UI + public, slug-based routes)
+
+```
+                    ┌──────────────────────────┐
+                    │        MQTT Broker       │
+                    │   (sensors, devices)     │
+                    └────────────┬─────────────┘
+                                 │
+                                 ▼
+                    ┌──────────────────────────┐
+                    │     1) MQTT Ingestion    │
+                    │   (subscriber / parser)  │
+                    └────────────┬─────────────┘
+                                 │
+                                 ▼
+                    ┌───────────────────────────┐
+                    │    2) SQLite Persistence  │
+                    │  (time-series per topic)  │
+                    └────────────┬──────────────┘
+                                 │
+               ┌─────────────────┴─────────────────┐
+               │      3) Plot Definition Layer     │
+               │  (topics → series → axes → slug)  │
+               └─────────────────┬─────────────────┘
+                                 │
+                ┌────────────────┴─────────────────┐
+                │                                  │
+                ▼                                  ▼
+┌──────────────────────────────┐     ┌──────────────────────────────┐
+│       4A) ADMIN UI           │     │      5B) PUBLIC PLOTS        │
+│   (authenticated / private)  │     │     (read-only / shared)     │
+│                              │     │                              │
+│ • Configure plots            │     │ • Slug-based URLs            │
+│ • Select MQTT topics         │     │ • No topic names visible     │
+│ • Assign axes & units        │     │ • No configuration access    │
+│ • Manage slugs               │     │ • Safe iframe embedding      │
+│ • Preview plots              │     │ • Plot navigation controls   │
+│                              │     │                              │
+└──────────────────────────────┘     └──────────────────────────────┘
+```
+### Data Flow
+1. MQTT messages arrive on subscribed topics.
+2. Messages are parsed and stored to the topic’s SQLite database.
+3. Plot routes query the database for a time window.
+4. Plotly renders interactive charts in the browser.
+
+### Separation of Concerns (0.7.0)
+- **Admin** routes expose configuration tools and internal details (protected).
+- **Public** routes expose only plots via **slugs** (no internal topic names).
 
 ---
 
-## Quick Start (5 minutes)
+## Slug-Based Plot URLs
 
-### Windows (PowerShell)
-```powershell
+A **slug** is a short, URL-safe identifier that represents a plot definition.
+
+Examples:
+```
+/plot/watergauge/height
+/plot/outdoor-temperature
+```
+
+Key properties:
+- Slugs map internally to one or more MQTT topics (one plot, many series).
+- Public users never see topic names, database paths, or credentials.
+- Slugs are stable and suitable for bookmarks or embedding.
+
+---
+
+## Public vs Admin Views
+
+### Public (Read-Only)
+- Intended for sharing, embedding, and unattended displays
+- Shows the plot title, axes labels, series legend, and navigation controls
+- Does not expose configuration, topic names, or backend details
+
+### Admin
+- Configure plots (title, units, axis assignment, series selection)
+- Control what becomes public (by enabling a slug)
+- Manage topic/series definitions and presentation settings
+
+---
+
+## Installation
+
+MQTTPlot 0.7.0 includes dedicated **service install and uninstall scripts** intended for
+Linux systems using `systemd`. These scripts provide a repeatable, production-oriented
+installation with a dedicated service user and persistent data storage.
+
+---
+
+### Prerequisites
+
+- Linux system with `systemd`
+- Root or sudo access
+- Python 3.10+
+- SQLite 3
+- Reachable MQTT broker (Mosquitto recommended)
+
+---
+
+### Install
+
+From the project root:
+
+```bash
 git clone https://github.com/sdwood68/MQTTPlot.git
 cd MQTTPlot
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-
-$env:DB_PATH="data\mqttplot_main.db"
-$env:DATA_DB_DIR="data\topics"
-$env:MQTT_BROKER="<mqtt-broker-ip>"
-mkdir data\topics
-
-$env:ADMIN_INIT_PASSWORD="ChangeMeNow!"
-python app.py
-Remove-Item Env:\ADMIN_INIT_PASSWORD
+chmod +x install.sh uninstall.sh
+sudo ./install.sh
 ```
 
-Open: http://localhost:5000
+#### What the installer does:
 
-## Linux / macOS
+- Installs MQTTPlot under: `/opt/mqttplot`
+- Creates a dedicated system user: `mqttplot`
+- Creates persistent directories:
 ```
-git clone https://github.com/sdwood68/MQTTPlot.git
-cd MQTTPlot
-python3 -m venv .venv
-source .venv/bin/activate
-pip install flask flask-socketio paho-mqtt
-
-export DB_PATH=$PWD/data/mqttplot_main.db
-export DATA_DB_DIR=$PWD/data/topics
-export MQTT_BROKER=<mqtt-broker-ip>
-mkdir -p data/topics
-
-export ADMIN_INIT_PASSWORD="ChangeMeNow!"
-python app.py
-unset ADMIN_INIT_PASSWORD
+/var/lib/mqttplot     # SQLite databases
+/var/log/mqttplot     # Application logs
+/etc/mqttplot         # Configuration
 ```
-Open: http://localhost:5000
+- Creates a Python virtual environment
+- Installs required Python dependencies
+- Installs and enables a systemd service: `mqttplot.service`
 
-### First run initialization
-On the very first startup only, MQTTPlot requires creation of an initial administrator account.
+The service runs as the **mqttplot** user (not root).
 
-This is done by setting the environment variable: ADMIN_INIT_PASSWORD
-
-#### Behavior
-
-If no admin user exists, MQTTPlot will refuse to start unless ADMIN_INIT_PASSWORD is set.
-
-On successful startup:
-- The admin user is created
-- The password is stored securely in the database
-
-On subsequent runs:
-- ADMIN_INIT_PASSWORD is not required
-- The variable should be removed
-
-#### Windows (PowerShell)
+### Optional Install Flags
 ```
-$env:ADMIN_INIT_PASSWORD="ChangeMeNow!"
-python app.py
-Remove-Item Env:\ADMIN_INIT_PASSWORD
+sudo ./install_service.sh --reset-db
 ```
-### Linux
-```
-export ADMIN_INIT_PASSWORD="ChangeMeNow!"
-python app.py
-unset ADMIN_INIT_PASSWORD
-```
-**Do not leave ADMIN_INIT_PASSWORD set permanently.**
+- `--reset-db`
+removes any existing databases under `/var/lib/mqttplot` before starting.
 
-It is only intended for first-time initialization.
+Use with caution.
+---
+### Configuration
 
-## VS Code Debugging
-MQTTPlot supports debugging via VS Code, but editor configuration is not
-committed to the repository.
+After Installation, edit the environment file created by the installer.
+```
+sudo nano /etc/mqttplot/mqttplot.env
+```
 
-Using launch.json
-1. Create .vscode/launch.json
-2. Example Configuration
-```{
-  "version": "0.2.0",
-  "configurations": [
-    {
-      "name": "MQTTPlot (venv)",
-      "type": "python",
-      "request": "launch",
-      "program": "${workspaceFolder}/app.py",
-      "env": {
-        "DB_PATH": "data/mqttplot_main.db",
-        "DATA_DB_DIR": "data/topics",
-        "MQTT_BROKER": "<mqtt-broker-ip>",
-        "ADMIN_INIT_PASSWORD": "ChangeMeNow!"
-      }
-    }
-  ]
-}
+Typical contents:
 ```
-3. Press F5 to start debugging
+MQTTPLOT_MQTT_HOST=localhost
+MQTTPLOT_MQTT_PORT=1883
+MQTTPLOT_MQTT_USERNAME=
+MQTTPLOT_MQTT_PASSWORD=
 
-After the first successful run, remove the
-ADMIN_INIT_PASSWORD entry from launch.json.
+MQTTPLOT_DB_ROOT=/var/lib/mqttplot
+MQTTPLOT_LOG_LEVEL=INFO
 
-# Architectuer Overview
+# Admin protection (project-specific)
+MQTTPLOT_ADMIN_SECRET=changeme
 ```
-MQTT Broker
-     |
-     v
- MQTTPlot
- ├── Flask web server
- ├── MQTT client (paho-mqtt)
- ├── SQLite (metadata + per-topic data)
- └── Browser UI (Plotly)
+---
+
+### Service Control
+
+#### Start / Stop (systemd)
 ```
-## Per Topic Database
-One SQLite file per top-level MQTT Topic
+sudo systemctl start mqttplot
+sudo systemctl stop mqttplot
+sudo systemctl status mqttplot
 ```
-data/
-├── topics/
-│   ├── watergauge.db
-│   ├── weather.db
-│   └── ...
+
+#### Enable at Boot
+```
+sudo systemctl enable mqttplot
+```
+
+---
+
+### Logs
+
+Log are available via `journalctl`:
+```
+sudo journalctl -u mqttplot -f
 ```
 
 
+---
+### Uninstall
 
-## Quick Start
-### 1️⃣ Clone the repository
-``` bash
-git clone https://github.com/yourusername/MQTTPlot.git
-cd MQTTPlot
+To remove MQTTPlot installed via the installer:
+```
+sudo ./uninstall_service.sh
+```
+#### Uninstall Options
+```
+sudo ./uninstall_service.sh --purge-data
+sudo ./uninstall_service.sh --remove-user
+```
+- `--purge-data`
+Deletes `/var/lib/mqttplot` (all stored data)
+- `--remove-user`
+Removes the `mqttplot` system user
+
+#### By default:
+- Data is preserved
+- The service user is retained.
+
+---
+
+### Manual / Development Mode (Optional)
+
+For development or testing without system installation, MQTTPlot can still be run directly via Python. See app.py and inline comments for details.
+
+Production deployments should use the service installer.
+
+
+## Embedded Plots
+Public plots can be embedded using an iframe:
+
+```
+<iframe
+  src="https://yourhost/plot/water-tank-level"
+  width="100%"
+  height="420"
+  frameborder="0">
+</iframe>
 ```
 
-### 2️⃣ Install dependencies
-```bash
-pip install -r requirements.txt
-```
+Recommendations:
+- Use a fixed height for stable dashboard layouts.
+- Prefer a reverse proxy (nginx/Caddy) for TLS termination in production.
 
-### 3️⃣ Run the server
-```bash
-python app.py
-```
-The Flask server runs on http://localhost:5000
+## Operational Notes
+### Storage Layout
 
-### 4️⃣ Connect your MQTT broker
+MQTTPlot persists data under the configured MQTTPLOT_DB_ROOT directory. Typically:
+- One SQLite database per topic (or per logical channel), depending on configuration.
+- Schema is created automatically if missing.
 
-By default, MQTTPlot connects to:
-```yaml
-broker: localhost
-port: 1883
-topics: #
-```
-Override with environment variables:
+#### Performance
+- Plot routes query by time window.
+- Multi-topic plots issue one query per series (unless optimized in your build).
+- For high-frequency sensors, plan for retention/downsampling in a future release.
 
-```bash
-MQTT_BROKER=192.168.12.50.local MQTT_TOPICS="watergauge/#" python app.py
-```
-### 5️⃣ Publish sample data
-```bash
-mosquitto_pub -h localhost -t sensors/temp -m '{"value": 23.5}'
-```
-### 6️⃣ Open the dashboard
+### Security Model
+- MQTT credentials are server-side only; never returned to clients.
+- Public endpoints are strictly read-only.
+- Admin endpoints are protected and should not be exposed without authentication controls.
+- Slugs are the only public identifiers; internal topic names remain private.
 
-Go to:
-```commandline
-http://localhost:5000
-```
-See:
+##  Versioning
 
-- List of topics
-- Real-time updates
-- Interactive Plotly graph (zoom, pan, hover)
+MQTTPlot follows semantic versioning:
 
-### 7️⃣ Use the REST API
-List topics
-```bash
-curl http://localhost:5000/api/topics
-```
-Fetch data
-```bash
-curl "http://localhost:5000/api/data?topic=sensors/temp&limit=100"
-```
-
-Generate PNG plot
-```bash
-curl -o plot.png "http://localhost:5000/api/plot_image?topic=sensors/temp"
-```
-
-## ⚙️ Environment Variables
-| Variable	     | Default        | Description            |
-|---------------|----------------|------------------------|
-| MQTT_BROKER   | localhost      | MQTT broker address    |
-| MQTT_PORT     | 1883	          | MQTT port              |
-| MQTT_TOPICS   | #	          | Comma-separated topics |
-| MQTT_USERNAME | (empty)	      | Optional username      |
-| MQTT_PASSWORD | (empty)	      | Optional password      |
-| DB_PATH       | mqtt_data.db   | SQLite database file   |
-| FLASK_PORT    | 5000           | Flask server port      |
-
-## 🌐 Web Dashboard
-Visit:
-```commandline
-http://localhost:5000
-```
-
-Displays live data and historical plots with adjustable time ranges.
-
-## 🧠 REST API
-```GET /api/topics```
-
-List topics and message counts.
-
-```GET /api/data```
-
-Query data:
-
-```php-template
-/api/data?topic=<topic>&start=<iso>&end=<iso>&limit=<n>
-```
-
-```GET /api/config``` | ```POST /api/config```
-
-Get or update plot configuration.
-
-```GET /api/plot_image```
-
-Return a static PNG or JSON Plotly object:
-
-```bash
-curl -o plot.png "http://localhost:5000/api/plot_image?topic=sensors/temp"
-```
-
-## 📊 Plot Configuration
-| Setting                      | Default | Description |
-|------------------------------|---------|-------------|
-| ```default_window_minutes``` | ```60``` | ```Time window for plots```
-| ```max_points```             | ```10000``` | ```Max datapoints per query``` |
-| ```update_interval_ms```     | ```2000``` | ```Websocket update rate``` |
-
-## 🐳 Docker Usage
-### Build
-```bash
-docker build -t mqttplot .
-```
-### Run
-```bash
-docker run -it --rm \
-  -e MQTT_BROKER=broker.emqx.io \
-  -e MQTT_TOPICS="sensors/#" \
-  -p 5000:5000 \
-  mqttplot
-```
-Visit http://localhost:5000
-
-## 🧩 Systemd Service (Auto-Start on Boot)
-
-You can run MQTTPlot automatically as a background service on Linux / Raspberry Pi.
-
-### 1️⃣ Create a service file
-
-Save as ```/etc/systemd/system/mqttplot.service:```
-
-```ini
-[Unit]
-Description=MQTTPlot - MQTT data dashboard
-After=network.target
-
-[Service]
-WorkingDirectory=/home/pi/MQTTPlot
-ExecStart=/usr/bin/python3 /home/pi/MQTTPlot/app.py
-Environment=MQTT_BROKER=localhost
-Environment=MQTT_TOPICS=sensors/#
-Restart=always
-User=pi
-
-[Install]
-WantedBy=multi-user.target
-```
-(Adjust paths and user as needed.)
-
-### 2️⃣ Enable and start
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable mqttplot.service
-sudo systemctl start mqttplot.service
-```
-
-### 3️⃣ Check status
-```bash
-sudo systemctl status mqttplot.service
-```
-If it’s running, visit:
-```cpp
- http://<your-device-ip>:5000
-```
-Logs are available with:
-```bash
- journalctl -u mqttplot.service -f
-```
-
-## 🔒 Optional Authentication
-To protect API endpoints, add a token check:
-
-```python
-@app.before_request
-def require_token():
-    if request.path.startswith("/api/"):
-        token = request.headers.get("X-API-Token")
-        if token != os.environ.get("API_TOKEN", "secret123"):
-            return jsonify({"error": "unauthorized"}), 401
-```
-
-## 🧹 Database Schema
-
-Table: messages
-
-| Field | Type | Description           |
-|-------|------|-----------------------|
-|id | INTEGER | Primary key           |
-| topic	| TEXT | MQTT topic            |
-| ts | TIMESTAMP | Message time          |
-| payload | TEXT | Raw MQTT payload      |
-| value | REAL | Parsed numeric value  |
-
-## 🧰 Developer Notes
-
-- Built with Plotly + Kaleido for graphing
-- Uses Socket.IO for live updates
-- Persists messages in SQLite
-- Configurable via REST or environment
-
-## 🧩 Example MQTT Publish
-```bash
-mosquitto_pub -h localhost -t sensors/temp -m '{"value":23.5}'
-```
-
-## 🧩 How to Use ``install_service.sh``
-
-### 1️⃣ Save this script in your project root as install_service.sh
-
-```bash
-nano install_service.sh
-```
-
-Paste the content above.
-
-### 2️⃣ Make it executable:
-```bash
-chmod +x install_service.sh
-```
-### 3️⃣ Run it with sudo:
-```bash
-sudo ./install_service.sh
-```
-### 4️⃣ Follow the prompts:
-```less
-📡 MQTT broker address [localhost]:
-🔌 MQTT port [1883]:
-📋 MQTT topics (comma-separated) [sensors/#]:
-🌐 Flask port [5000]:
-💾 Database path [/home/pi/MQTTPlot/mqtt_data.db]:
-👤 Run service as user [pi]:
-🔐 MQTT username (optional):
-🔑 MQTT password (optional):
-### ✅ What it does
-```
-
-Once complete, it automatically:
-
-- reates /etc/systemd/system/mqttplot.service
-- Enables auto-start on boot
-- Starts the service immediately
-- Shows its current status
-
-### 🧠Optional Maintenance Commands
-
-Stop service:
-```bash
- sudo systemctl stop mqttplot
-```
-
-Restart service:
-```bash
- sudo systemctl restart mqttplot
-```
-View live logs:
-```bash
- journalctl -u mqttplot -f
-```
-
-## 📄 License
-
-MIT License — use freely for personal or commercial projects.
-Created by Stuart Wood with help from GPT-5
+- 0.6.x – Single-topic plots, admin-centric UI
+- 0.7.0 – Public slugs, multi-topic plots, embedding
+- 0.8.x (planned) – Auth, dashboards, retention policies
