@@ -117,6 +117,19 @@ function readTopicsFromTable() {
   return topics;
 }
 
+// Builds a PlotSpec-like object from the current form inputs (used for preview).
+export function getPublicPlotSpecFromInputs() {
+  const title = ($('pp_title')?.value || '').trim();
+  const rangeSec = parseInt($('pp_range_sec')?.value || '3600', 10);
+  const topics = readTopicsFromTable();
+  return {
+    title: title || 'Preview',
+    topics,
+    time: { kind: 'relative', seconds: isFinite(rangeSec) && rangeSec > 0 ? rangeSec : 3600 },
+    refresh: { enabled: false, intervalMs: 5000 }
+  };
+}
+
 function clearPublicPlotForm() {
   if ($('pp_slug')) $('pp_slug').value = '';
   if ($('pp_title')) $('pp_title').value = '';
