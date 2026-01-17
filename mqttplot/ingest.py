@@ -87,7 +87,7 @@ class IngestService:
                 topic,
                 ts_epoch,
                 stored=stored,
-                last_value=value if value is not None else None,
+                last_value=value if stored else None,
             )
 
         return IngestResult(decision=decision, reason=reason, value=value)

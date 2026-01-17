@@ -89,7 +89,7 @@ class MetadataStore:
         *,
         stored: bool,
         last_value: float | None = None,
-        last_payload_text: str | None = None,
+        last_payload_text: str | None = None,  # kept for future; not stored currently
     ) -> None:
         """
         Atomically update metadata for one observed MQTT message.
@@ -98,70 +98,67 @@ class MetadataStore:
         - Ensures topic_meta row exists (default public=1)
         - Upserts topic_stats:
             * first_seen_ts_epoch (set once)
-            * last_seen_ts_epoch (always moves forward)
+            * last_seen_ts_epoch (monotonic)
             * message_count (+1)
-            * last_value (optional; only if numeric provided)
-        - Optional counters:
-            * stored_count (+1) if stored=True
-            * dropped_count (+1) if stored=False
-            (only applied if those columns exist)
+            * last_value (only updated if last_value is not None)
+            * stored_count/dropped_count (+1 accordingly)
         """
-        cur = self._con.cursor()
+        ts = float(ts_epoch)
+        stored_inc = 1 if stored else 0
+        dropped_inc = 0 if stored else 1
 
-        # Ensure topic_meta exists (public defaults to 1)
-        cur.execute(
-            """
-            INSERT INTO topic_meta(topic, public)
-            VALUES(?, 1)
-            ON CONFLICT(topic) DO NOTHING
-            """,
-            (topic,),
-        )
-
-        # Base upsert for stats: first_seen set once, last_seen always updated, count increments
-        # last_value is only set if provided (numeric); otherwise keep prior.
-        cur.execute(
-            """
-            INSERT INTO topic_stats(
-                topic,
-                message_count,
-                first_seen_ts_epoch,
-                last_seen_ts_epoch,
-                last_value
+        def _work(cur: sqlite3.Cursor) -> None:
+            # Ensure topic_meta exists (public defaults to 1)
+            cur.execute(
+                """
+                INSERT INTO topic_meta(topic, public)
+                VALUES(?, 1)
+                ON CONFLICT(topic) DO NOTHING
+                """,
+                (topic,),
             )
-            VALUES(?, 1, ?, ?, ?)
-            ON CONFLICT(topic) DO UPDATE SET
-                message_count = topic_stats.message_count + 1,
-                first_seen_ts_epoch = COALESCE(topic_stats.first_seen_ts_epoch, excluded.first_seen_ts_epoch),
-                last_seen_ts_epoch  = CASE
-                    WHEN topic_stats.last_seen_ts_epoch IS NULL THEN excluded.last_seen_ts_epoch
-                    WHEN excluded.last_seen_ts_epoch > topic_stats.last_seen_ts_epoch THEN excluded.last_seen_ts_epoch
-                    ELSE topic_stats.last_seen_ts_epoch
-                END,
-                last_value = CASE
-                    WHEN excluded.last_value IS NOT NULL THEN excluded.last_value
-                    ELSE topic_stats.last_value
-                END
-            """,
-            (topic, float(ts_epoch), float(ts_epoch), last_value),
-        )
 
-        # Optional counters (only if columns exist)
-        try:
-            if stored:
-                cur.execute(
-                    "UPDATE topic_stats SET stored_count = COALESCE(stored_count, 0) + 1 WHERE topic=?",
-                    (topic,),
+            # Single upsert handles all counters + seen timestamps + last_value
+            cur.execute(
+                """
+                INSERT INTO topic_stats(
+                    topic,
+                    first_seen_ts_epoch,
+                    last_seen_ts_epoch,
+                    message_count,
+                    last_value,
+                    stored_count,
+                    dropped_count
                 )
-            else:
-                cur.execute(
-                    "UPDATE topic_stats SET dropped_count = COALESCE(dropped_count, 0) + 1 WHERE topic=?",
-                    (topic,),
-                )
-        except sqlite3.OperationalError:
-            pass
+                VALUES(?, ?, ?, 1, ?, ?, ?)
+                ON CONFLICT(topic) DO UPDATE SET
+                    message_count = topic_stats.message_count + 1,
 
-        self._commit_with_retry()
+                    first_seen_ts_epoch = CASE
+                        WHEN topic_stats.first_seen_ts_epoch IS NULL THEN excluded.first_seen_ts_epoch
+                        WHEN excluded.first_seen_ts_epoch < topic_stats.first_seen_ts_epoch THEN excluded.first_seen_ts_epoch
+                        ELSE topic_stats.first_seen_ts_epoch
+                    END,
+
+                    last_seen_ts_epoch = CASE
+                        WHEN topic_stats.last_seen_ts_epoch IS NULL THEN excluded.last_seen_ts_epoch
+                        WHEN excluded.last_seen_ts_epoch > topic_stats.last_seen_ts_epoch THEN excluded.last_seen_ts_epoch
+                        ELSE topic_stats.last_seen_ts_epoch
+                    END,
+
+                    last_value = CASE
+                        WHEN excluded.last_value IS NOT NULL THEN excluded.last_value
+                        ELSE topic_stats.last_value
+                    END,
+
+                    stored_count  = topic_stats.stored_count  + excluded.stored_count,
+                    dropped_count = topic_stats.dropped_count + excluded.dropped_count
+                """,
+                (topic, ts, ts, last_value, stored_inc, dropped_inc),
+            )
+
+        self._txn_with_retry(_work)
+
     
 
     def get_topic_policy(self, topic: str) -> dict:
@@ -229,3 +226,39 @@ class MetadataStore:
                     raise
                 _time.sleep(base_sleep * (i + 1))
         raise last_err
+
+    def _txn_with_retry(self, fn, *, attempts: int = 5, base_sleep: float = 0.05) -> None:
+        """
+        Run fn(cur) inside a transaction with retry on SQLITE_BUSY/locked.
+
+        Why: locks can occur on execute(), not just commit(). This retries the
+        entire transaction unit (BEGIN..COMMIT) and rolls back on failure.
+        """
+        import time as _time
+
+        last_err: Exception | None = None
+
+        for i in range(attempts):
+            try:
+                cur = self._con.cursor()
+                cur.execute("BEGIN")
+                fn(cur)
+                self._con.commit()
+                return
+
+            except sqlite3.OperationalError as e:
+                last_err = e
+                msg = str(e).lower()
+
+                # Always rollback if we began a transaction
+                try:
+                    self._con.rollback()
+                except Exception:
+                    pass
+
+                if ("locked" not in msg) and ("busy" not in msg):
+                    raise
+
+                _time.sleep(base_sleep * (i + 1))
+
+        raise last_err  # type: ignore[misc]
