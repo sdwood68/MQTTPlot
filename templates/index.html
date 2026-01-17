@@ -9,8 +9,9 @@
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 
     <link rel="stylesheet" href="/static/mqttplot.css">
+    <script type="module" src="/static/js/common_main.js"></script>
     {% if admin %}
-    <script src="/static/mqttplot.js" defer></script>
+    <script type="module" src="/static/js/admin_main.js"></script>
     {% endif %}
 </head>
 
@@ -56,14 +57,14 @@
       <!-- End time is no longer user-controlled; keep hidden for internal windowing -->
       <input id="end" type="hidden" value="">
 
-      <button onclick="plot()">Plot</button>
+      <button id="btnPlot">Plot</button>
 
       <!-- v0.6.0 plot window controls -->
       <div style="margin-top: 8px;">
-          <button id="btnBack" onclick="slideWindow(-0.5)">◀ Back 50%</button>
-          <button id="btnFwd" onclick="slideWindow(0.5)">Forward 50% ▶</button>
-          <button id="btnZoomIn" onclick="zoomIn()">Zoom In</button>
-          <button id="btnZoomOut" onclick="zoomOut()">Zoom Out</button>
+          <button id="btnBack">◀ Back 50%</button>
+          <button id="btnFwd">Forward 50% ▶</button>
+          <button id="btnZoomIn">Zoom In</button>
+          <button id="btnZoomOut">Zoom Out</button>
       </div>
 
       <datalist id="topiclist"></datalist>
@@ -85,8 +86,8 @@
       <div class="admin-box">
           <h3>OTA Control</h3>
           <input id="otaBase" placeholder="Base topic (e.g. watergauge)">
-          <button onclick="sendOTA(1)">Enter OTA</button>
-          <button onclick="sendOTA(0)">Exit OTA</button>
+          <button id="btnOtaEnter">Enter OTA</button>
+          <button id="btnOtaExit">Exit OTA</button>
       </div>
     {% endif %}
 
@@ -107,7 +108,7 @@
             <label>Max rows:
                 <input id="ret_max_rows" type="number" min="1">
             </label>
-            <button onclick="saveRetention()">Save retention</button>
+            <button id="btnSaveRetention">Save retention</button>
         </div>
         <pre id="retention_status"></pre>
         <hr>
@@ -142,8 +143,8 @@
           <label style="margin-left:10px;">
             <input id="pp_published" type="checkbox" checked> Published
           </label>
-          <button onclick="savePublicPlot()" style="margin-left:10px;">Save</button>
-          <button onclick="refreshPublicPlots()">Refresh list</button>
+          <button id="btnSavePublicPlot" style="margin-left:10px;">Save</button>
+          <button id="btnRefreshPublicPlots">Refresh list</button>
         </div>
         <pre id="public_plots_status"></pre>
         <div id="public_plots_list"></div>
