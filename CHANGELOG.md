@@ -1,42 +1,65 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+All notable changes to MQTTPlot are documented in this file.
 
-## [0.6.2] - 2026-01-09
+The format is based on Keep a Changelog and follows semantic versioning.
+
+---
+
+## [0.7.0] – 2026-01-XX
+
 ### Added
-- Maintenance milestone: 0.6.2 “Code cleaning / review / reorganization”
-- Python package structure introduced under `mqttplot/` (incremental refactor; legacy entrypoint retained)
+- Slug-based public plot URLs
+- Read-only public plot rendering
+- Multi-topic plot support (multiple series per plot)
+- Embeddable plots suitable for iframes
+- Plot preview thumbnails
+- In-plot navigation and control widgets
 
 ### Changed
-- Phase 1 refactor: extracted persistence layer to `mqttplot/storage.py` and MQTT worker to `mqttplot/mqtt_client.py`
-- Root `app.py` now acts as a compatibility wrapper that calls `mqttplot.app.main()`
-- Documentation refresh: ROADMAP status annotations and README roadmap overview
+- JavaScript restructured to support multi-series plots
+- HTML templates separated for admin vs public rendering
+- Plot definitions decoupled from MQTT topic names
+- Dual Y-axis major unit alignment improved
+- Clear separation between ingestion, configuration, and presentation layers
 
-### Notes
-- 0.6.2 is intended as a maintenance-focused release to improve structure, clarity, and testability without changing user-facing behavior.
+### Removed
+- Implicit assumption of one topic per plot
+- Exposure of MQTT topic names in public-facing views
+- Leakage of internal configuration details to anonymous users
 
-## [0.6.1] - 2026-01-08
-### Added
-- Interactive plot window navigation controls (zoom in/out, slide forward/backward)
-- Persistent SQLite storage organized per top-level MQTT topic
+### Security
+- Public routes are strictly read-only
+- MQTT credentials remain server-side only
+- Admin-only functionality isolated from public endpoints
 
+---
+
+## [0.6.2]
 ### Changed
-- Service scripts and operational hardening (install/uninstall, systemd service)
-- Improved guardrails and retention handling (best-effort enforcement)
+- Code cleanup and module reorganization
+- Logging improvements
+- Minor UI consistency fixes
 
-### Known Issues
-- Pre-1.0 API stability
-- Limited MQTT payload validation
+---
 
+## [0.6.1]
+### Fixed
+- MQTT reconnect handling edge cases
+- Minor persistence issues during broker restarts
 
-## [0.5.0] - 2026-01-03
+---
+
+## [0.6.0]
 ### Added
-- Initial tagged baseline release
-- Core MQTT ingestion and plotting functionality
+- Time-window navigation controls
+- Plot interaction buttons
+- Initial admin UI improvements
 
-### Changed
-- Code organization and internal structure cleanup
+---
 
-### Known Issues
-- Pre-1.0 API stability
-- Limited MQTT payload validation
+## [0.5.x]
+### Added
+- Initial MQTT ingestion pipeline
+- SQLite-based time-series persistence
+- Basic Plotly visualization
