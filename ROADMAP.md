@@ -35,6 +35,7 @@ configuration (admin)**, and **public presentation (slug-based plots)**.
 - Plot time spans are not adhereing to the 2, 4, 8, 12 hour, 1, 3, 5 day, 1, 2, 4 weeks with 4 ours as the default. 
 - pressing the forward keeps zooming when you reach the lastest sample date instead of just stopping. It should not change the time span.
 - remove the plotly pop-up controlls for the graph 
+- remove the redundant plot start and stop date times
 
 
 ### 0.8.0 — Dashboards & Access Control
