@@ -31,9 +31,18 @@ configuration (admin)**, and **public presentation (slug-based plots)**.
 
 ## Planned
 
-### 0.8.x — Dashboards & Access Control
-Focus: **composition and controlled sharing**
+### 0.7.1 - Bug Fixes, minor tweak to graphs
+- Plot time spans are not adhereing to the 2, 4, 8, 12 hour, 1, 3, 5 day, 1, 2, 4 weeks with 4 ours as the default. 
+- pressing the forward keeps zooming when you reach the lastest sample date instead of just stopping. It should not change the time span.
+- remove the plotly pop-up controlls for the graph 
 
+
+### 0.8.0 — Dashboards & Access Control
+Focus: **composition and controlled sharing**
+- Displayed Times should be to local time zone
+- Add time zone setting
+- y-axis ticks should be to the minute not seconds. 
+- X-axis ticks should have a minimum resolution per topic. Height information should be in feet and inches with no decimals
 - Multi-plot dashboards (grid and vertical layouts)
 - Dashboard-level slugs
 - Optional authentication layer
