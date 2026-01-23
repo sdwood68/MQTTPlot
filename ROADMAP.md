@@ -37,19 +37,51 @@ configuration (admin)**, and **public presentation (slug-based plots)**.
 - remove the plotly pop-up controlls for the graph 
 - remove the redundant plot start and stop date times
 
+### 0.7.2 - Minor UI and scalling tweek to graphs
+- Add a 'Live' indicator when the plot is at the tail/end and is following the tail.
+- Display the time span to the right on the Zoom buttons
+- Remove the redundant plot title as it is the same as the one on the same row as the control buttons.
+- Fix the back button. If the data set is less than the window size it should do nothing.
+- Remove the Broker address from the public page
 
-### 0.8.0 — Dashboards & Access Control
+
+### 0.8.0 — Admin User Interface
+Focus: **Admin Interface Improvements**
+- hierarchical topics table
+  - List the Root Topic and its Subtopics.
+  - Root Topic Row: 
+    - Retension policy for that Root Topic; Max age. Max rows, ave button 
+  - Subtopic rows: 
+    - Display the number of messages
+    - Remove the public visibility checkbox, we will migrate to just display plots configure with slugs.
+    - Data Validation Limits:
+      - Entries should display 'Min Value' and 'Max Value' when no data is in them.
+      - Entries should be limited to 10 characters each to reduce size.
+      - Data Validation should be automatic if there is an entry.
+      - Delete Button. No functional change.
+    - Add units’ dropdown to include
+      - Distance; meter or feet and inches
+      - Temperature; Fahrenheit or Celsius
+      - Voltage
+      - Other
+    - Add minimum y-axis tick size.
+    - Y-axis tickes need to be hole sizes of the minimum tick size. If min tick size is 1 then tick labels should should be rounded to the min tick size.
+- Plot Data:
+  - remove the From [ISO time or epoch] field
+  - Plot control buttons should only be shown when there is a plot displayed. 
+- Time Zone
+  - Add time zone setting in admin mode
+  - Displayed times should be to local time zone
+- Add broker configuration to the admin page
+should be in feet and inches with no decimals
+
+### 0.8.1 — Dashboards & Access Control
 Focus: **composition and controlled sharing**
-- Displayed Times should be to local time zone
-- Add time zone setting
-- y-axis ticks should be to the minute not seconds. 
-- X-axis ticks should have a minimum resolution per topic. Height information should be in feet and inches with no decimals
 - Multi-plot dashboards (grid and vertical layouts)
 - Dashboard-level slugs
 - Optional authentication layer
 - Per-plot and per-dashboard access controls
 - Configurable auto-refresh intervals
-- Admin UI improvements for plot grouping
 
 ---
 

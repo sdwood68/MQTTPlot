@@ -27,8 +27,9 @@ export class MultiTopicPlotPreview {
     this.currentEnd = null;
     this.boundsCache = {}; // topic -> {min: Date, max: Date} | undefined
     this.topicToTraceIndex = new Map();
-  }    this.overallMax = null;
-  })
+    this.overallMax = null;
+  }
+
 
   _plotDiv() {
     return document.getElementById(this.plotDivId);

@@ -6,6 +6,10 @@ The format is based on Keep a Changelog and follows semantic versioning.
 
 ---
 
+## [0.7.1.1] - 2026-01-23
+
+- Fix: Repair JavaScript syntax error in admin multi-topic preview module (`plot_multi.js`) that prevented admin topics list from loading.
+
 ## [0.7.1] – 2026-01-23
 
 ### Fixed
