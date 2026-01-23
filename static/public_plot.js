@@ -1,12 +1,11 @@
 /* MQTTPlot - Public Plot Page (slug-based)
 
-   This script is intentionally minimal:
-   - Fetches a published PlotSpec by slug
-   - Renders multi-topic Plotly traces
-   - Refreshes periodically if enabled
-
-   Security note: the server enforces that only topics included
-   in the published plot spec can be queried via public endpoints.
+   v0.7.1 behavior:
+   - Fixed window presets (2/4/8/12h, 1/3/5d, 1/2/4w; default 4h)
+   - Back/Forward slides by one full window span (no implicit zoom)
+   - Forward clamps at the latest sample (no "creeping" past the tail)
+   - If the window is at the tail, it stays pinned to the tail as new samples arrive
+   - Plotly mode bar disabled
 */
 
 function $(id) { return document.getElementById(id); }
@@ -40,15 +39,22 @@ function buildTrace(series, topicSpec) {
   };
 }
 
+// Discrete window presets (small -> large). Span is immutable unless the user changes presets.
+// v0.7.1 presets:
+//   2, 4, 8, 12 hours (default = 4 hours)
+//   1, 3, 5 days
+//   1, 2, 4 weeks
 const WINDOW_OPTIONS_MS = [
-  1 * 60 * 60 * 1000,
-  6 * 60 * 60 * 1000,
-  12 * 60 * 60 * 1000,
-  24 * 60 * 60 * 1000,
-  3 * 24 * 60 * 60 * 1000,
-  7 * 24 * 60 * 60 * 1000,
-  14 * 24 * 60 * 60 * 1000,
-  28 * 24 * 60 * 60 * 1000
+  2 * 60 * 60 * 1000,        // 2 hours
+  4 * 60 * 60 * 1000,        // 4 hours (default)
+  8 * 60 * 60 * 1000,        // 8 hours
+  12 * 60 * 60 * 1000,       // 12 hours
+  24 * 60 * 60 * 1000,       // 1 day
+  3 * 24 * 60 * 60 * 1000,   // 3 days
+  5 * 24 * 60 * 60 * 1000,   // 5 days
+  7 * 24 * 60 * 60 * 1000,   // 1 week
+  14 * 24 * 60 * 60 * 1000,  // 2 weeks
+  28 * 24 * 60 * 60 * 1000   // 4 weeks
 ];
 
 function nearestWindowIndex(windowMs) {
@@ -64,55 +70,74 @@ function nearestWindowIndex(windowMs) {
   return bestIdx;
 }
 
-function formatRangeLabel(start, end) {
-  if (!start || !end) return '';
-  const s = start.toLocaleString();
-  const e = end.toLocaleString();
-  return `${s} ... ${e}`;
+function clampEndToTail(end, tail) {
+  if (!end || !tail) return end;
+  return (end.getTime() > tail.getTime()) ? new Date(tail) : end;
 }
 
+// Returns { traces, start, end, tail }
 async function loadSeriesForPlot(slug, plotSpec, windowState) {
   const now = new Date();
-  let start = windowState?.start ? new Date(windowState.start) : null;
-  let end = windowState?.end ? new Date(windowState.end) : null;
 
-  if (!end || isNaN(end.getTime())) end = now;
-  if (end > now) end = now;
-
-  if (!start || isNaN(start.getTime())) {
-    const sec = Number(plotSpec?.time?.seconds || 3600);
-    const ms = (isFinite(sec) && sec > 0 ? sec : 3600) * 1000;
-    start = new Date(end.getTime() - ms);
+  // Determine the span (immutable unless changed via zoom buttons).
+  const specSec = Number(plotSpec?.time?.seconds || 0);
+  const specMs = (isFinite(specSec) && specSec > 0) ? specSec * 1000 : null;
+  if (!windowState.spanMs) {
+    windowState.spanMs = specMs ? WINDOW_OPTIONS_MS[nearestWindowIndex(specMs)] : WINDOW_OPTIONS_MS[1]; // default 4h
   }
 
-  const startIso = start.toISOString();
-  const endIso = end.toISOString();
+  // If we're following the tail, request up to "now" and later pin end to the latest sample seen.
+  // If not following the tail, request up to the user's chosen end.
+  let requestedEnd = windowState.followTail ? now : (windowState.end ? new Date(windowState.end) : now);
+  if (requestedEnd > now) requestedEnd = now;
+
+  // Derive start from end and the immutable span.
+  let requestedStart = new Date(requestedEnd.getTime() - windowState.spanMs);
 
   const topics = Array.isArray(plotSpec.topics) ? plotSpec.topics : [];
   const traces = [];
+
+  let tail = null; // max timestamp actually observed in returned data
 
   for (const t of topics) {
     const name = t?.name;
     if (!name) continue;
 
     const url = `/api/public/data?slug=${encodeURIComponent(slug)}&topic=${encodeURIComponent(name)}`
-      + (startIso ? `&start=${encodeURIComponent(startIso)}` : '')
-      + (endIso ? `&end=${encodeURIComponent(endIso)}` : '');
+      + `&start=${encodeURIComponent(requestedStart.toISOString())}`
+      + `&end=${encodeURIComponent(requestedEnd.toISOString())}`;
 
     const points = await fetchJson(url);
     traces.push(buildTrace(points, t));
+
+    if (Array.isArray(points) && points.length > 0) {
+      const last = new Date(points[points.length - 1].ts);
+      if (!isNaN(last.getTime())) {
+        if (!tail || last > tail) tail = last;
+      }
+    }
   }
 
-  return { traces, start, end };
+  // Pin end to the latest sample if following.
+  let end = windowState.followTail && tail ? new Date(tail) : new Date(requestedEnd);
+
+  // If not following, still ensure we never run past the known tail we last observed.
+  if (!windowState.followTail && tail) end = clampEndToTail(end, tail);
+
+  let start = new Date(end.getTime() - windowState.spanMs);
+
+  return { traces, start, end, tail };
 }
 
 async function renderOnce(slug, windowState) {
   showError('');
-  const spec = await fetchJson(`/api/public/plots/${encodeURIComponent(slug)}`);
-  const { traces, start, end } = await loadSeriesForPlot(slug, spec.spec || spec, windowState);
+  const specResp = await fetchJson(`/api/public/plots/${encodeURIComponent(slug)}`);
+  const spec = specResp.spec || specResp;
+
+  const { traces, start, end, tail } = await loadSeriesForPlot(slug, spec, windowState);
 
   const layout = {
-    title: spec.title || spec.spec?.title || slug,
+    title: specResp.title || spec.title || slug,
     margin: { t: 60, l: 60, r: 60, b: 40 },
     xaxis: { title: 'Time' },
     yaxis: { title: '', nticks: 6, ticks: 'outside' },
@@ -121,10 +146,10 @@ async function renderOnce(slug, windowState) {
     legend: { orientation: 'h' }
   };
 
-  const config = { responsive: true, displaylogo: false };
+  const config = { responsive: true, displaylogo: false, displayModeBar: false };
   await Plotly.react('plot', traces, layout, config);
 
-  return { spec, start, end };
+  return { specResp, spec, start, end, tail };
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -134,11 +159,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     return;
   }
 
-  let windowState = { start: null, end: null };
-  const rangeLabelEl = $('rangeLabel');
-  const updateRangeLabel = (start, end) => {
-    if (rangeLabelEl) rangeLabelEl.textContent = formatRangeLabel(start, end);
-  };
+  // Window state:
+  // - spanMs: immutable selected span
+  // - start/end: current displayed window
+  // - tail: latest sample timestamp observed
+  // - followTail: whether the window is pinned to the tail
+  const windowState = { spanMs: null, start: null, end: null, tail: null, followTail: true };
 
   let result;
   try {
@@ -147,56 +173,94 @@ document.addEventListener('DOMContentLoaded', async () => {
     showError(`Failed to load plot: ${e.message}`);
     return;
   }
+
   windowState.start = result.start;
   windowState.end = result.end;
-  updateRangeLabel(result.start, result.end);
+  windowState.tail = result.tail;
 
   $('btnBack')?.addEventListener('click', async () => {
-    const w = (windowState.end && windowState.start) ? Math.max(1000, windowState.end - windowState.start) : 3600 * 1000;
-    const shift = w * 0.5;
-    windowState.end = new Date(windowState.end.getTime() - shift);
-    windowState.start = new Date(windowState.end.getTime() - w);
+    const spanMs = windowState.spanMs || WINDOW_OPTIONS_MS[1];
+    windowState.followTail = false;
+    windowState.end = new Date((windowState.end || new Date()).getTime() - spanMs);
+    windowState.start = new Date(windowState.end.getTime() - spanMs);
+
     const r = await renderOnce(slug, windowState).catch(() => null);
-    if (r) { windowState.start = r.start; windowState.end = r.end; updateRangeLabel(r.start, r.end); }
+    if (r) {
+      windowState.start = r.start;
+      windowState.end = r.end;
+      windowState.tail = r.tail;
+    }
   });
 
   $('btnFwd')?.addEventListener('click', async () => {
-    const w = (windowState.end && windowState.start) ? Math.max(1000, windowState.end - windowState.start) : 3600 * 1000;
-    const shift = w * 0.5;
-    windowState.end = new Date(windowState.end.getTime() + shift);
-    windowState.start = new Date(windowState.end.getTime() - w);
+    const spanMs = windowState.spanMs || WINDOW_OPTIONS_MS[1];
+    let proposedEnd = new Date((windowState.end || new Date()).getTime() + spanMs);
+
+    // Clamp to last known tail (if known).
+    if (windowState.tail && proposedEnd > windowState.tail) {
+      proposedEnd = new Date(windowState.tail);
+      windowState.followTail = true;
+    }
+
+    windowState.end = proposedEnd;
+    windowState.start = new Date(windowState.end.getTime() - spanMs);
+
     const r = await renderOnce(slug, windowState).catch(() => null);
-    if (r) { windowState.start = r.start; windowState.end = r.end; updateRangeLabel(r.start, r.end); }
+    if (r) {
+      windowState.start = r.start;
+      windowState.end = r.end;
+      windowState.tail = r.tail;
+
+      // If we've reached the tail, keep following it as new samples arrive.
+      if (windowState.tail && Math.abs(windowState.tail.getTime() - windowState.end.getTime()) <= 5000) {
+        windowState.followTail = true;
+      }
+    }
   });
 
   $('btnZoomIn')?.addEventListener('click', async () => {
-    const w = (windowState.end && windowState.start) ? Math.max(1000, windowState.end - windowState.start) : 3600 * 1000;
-    const idx = nearestWindowIndex(w);
+    const spanMs = windowState.spanMs || WINDOW_OPTIONS_MS[1];
+    const idx = nearestWindowIndex(spanMs);
     const newIdx = Math.max(0, idx - 1);
-    const newW = WINDOW_OPTIONS_MS[newIdx];
-    windowState.start = new Date(windowState.end.getTime() - newW);
+    windowState.spanMs = WINDOW_OPTIONS_MS[newIdx];
+
+    // Keep end fixed; recompute start from the new span.
+    windowState.start = new Date(windowState.end.getTime() - windowState.spanMs);
+
     const r = await renderOnce(slug, windowState).catch(() => null);
-    if (r) { windowState.start = r.start; windowState.end = r.end; updateRangeLabel(r.start, r.end); }
+    if (r) {
+      windowState.start = r.start;
+      windowState.end = r.end;
+      windowState.tail = r.tail;
+    }
   });
 
   $('btnZoomOut')?.addEventListener('click', async () => {
-    const w = (windowState.end && windowState.start) ? Math.max(1000, windowState.end - windowState.start) : 3600 * 1000;
-    const idx = nearestWindowIndex(w);
+    const spanMs = windowState.spanMs || WINDOW_OPTIONS_MS[1];
+    const idx = nearestWindowIndex(spanMs);
     const newIdx = Math.min(WINDOW_OPTIONS_MS.length - 1, idx + 1);
-    const newW = WINDOW_OPTIONS_MS[newIdx];
-    windowState.start = new Date(windowState.end.getTime() - newW);
+    windowState.spanMs = WINDOW_OPTIONS_MS[newIdx];
+
+    windowState.start = new Date(windowState.end.getTime() - windowState.spanMs);
+
     const r = await renderOnce(slug, windowState).catch(() => null);
-    if (r) { windowState.start = r.start; windowState.end = r.end; updateRangeLabel(r.start, r.end); }
+    if (r) {
+      windowState.start = r.start;
+      windowState.end = r.end;
+      windowState.tail = r.tail;
+    }
   });
 
-  const refresh = (result.spec.spec || result.spec).refresh;
+  const refresh = (result.specResp.spec || result.specResp).refresh;
   if (refresh && refresh.enabled) {
     const intervalMs = Math.max(2000, Number(refresh.intervalMs || 5000));
     setInterval(() => {
+      // If pinned to tail, re-render with followTail = true (window advances to newest sample).
+      // If not pinned, keep the user's selected end (no hijacking).
       renderOnce(slug, windowState).then((r) => {
         windowState.start = r.start;
         windowState.end = r.end;
-        updateRangeLabel(r.start, r.end);
+        windowState.tail = r.tail;
       }).catch(() => {});
     }, intervalMs);
   }

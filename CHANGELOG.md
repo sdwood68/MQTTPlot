@@ -6,6 +6,22 @@ The format is based on Keep a Changelog and follows semantic versioning.
 
 ---
 
+## [0.7.1] – 2026-01-23
+
+### Fixed
+- Enforced fixed time-span presets (2/4/8/12 hours; 1/3/5 days; 1/2/4 weeks) and removed span drift during navigation.
+- Clamped forward navigation to the latest available sample (no creeping past the tail).
+- When the plot window end is at the latest sample, it now remains pinned to the latest sample as new data arrives (without changing the selected span).
+
+### Changed
+- Back/Forward navigation now slides by one full window span.
+- Plotly mode bar (popup controls) disabled for both public plots and admin preview plots.
+
+### Removed
+- Redundant public plot start/end range display.
+
+---
+
 ## [0.7.0] – 2026-01-XX
 
 ### Added

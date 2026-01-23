@@ -1,15 +1,21 @@
 import { getBounds as apiGetBounds, getData } from '../api.js';
 
-// Discrete zoom window options (small -> large)
+// Discrete window presets (small -> large). Span is immutable unless the user changes presets.
+// v0.7.1 presets:
+//   2, 4, 8, 12 hours (default = 4 hours)
+//   1, 3, 5 days
+//   1, 2, 4 weeks
 const WINDOW_OPTIONS_MS = [
-  4 * 60 * 60 * 1000,
-  8 * 60 * 60 * 1000,
-  12 * 60 * 60 * 1000,
-  24 * 60 * 60 * 1000,
-  3 * 24 * 60 * 60 * 1000,
-  7 * 24 * 60 * 60 * 1000,
-  14 * 24 * 60 * 60 * 1000,
-  28 * 24 * 60 * 60 * 1000
+  2 * 60 * 60 * 1000,        // 2 hours
+  4 * 60 * 60 * 1000,        // 4 hours (default)
+  8 * 60 * 60 * 1000,        // 8 hours
+  12 * 60 * 60 * 1000,       // 12 hours
+  24 * 60 * 60 * 1000,       // 1 day
+  3 * 24 * 60 * 60 * 1000,   // 3 days
+  5 * 24 * 60 * 60 * 1000,   // 5 days
+  7 * 24 * 60 * 60 * 1000,   // 1 week
+  14 * 24 * 60 * 60 * 1000,  // 2 weeks
+  28 * 24 * 60 * 60 * 1000   // 4 weeks
 ];
 
 export class SingleTopicPlot {
@@ -110,9 +116,7 @@ export class SingleTopicPlot {
 
   setCurrentTopic(topic) {
     this.currentTopic = topic || null;
-  }
-
-  handleLiveMessage(msg) {
+  }  handleLiveMessage(msg) {
     if (!this.currentTopic || msg.topic !== this.currentTopic) return;
     this.safeExtend(msg.ts, msg.value);
 
@@ -120,16 +124,33 @@ export class SingleTopicPlot {
     if (isNaN(ts.getTime())) return;
 
     const b = this.boundsCache[this.currentTopic];
+
+    // Preserve the previous tail so we can detect whether the user is "following"
+    // the latest sample (i.e., currentEnd was at the tail before this update).
+    const prevTail = (b && b.max) ? new Date(b.max) : null;
+
+    // Update cached max bound (tail) if this sample is newer.
     if (b && b.max && ts > b.max) b.max = ts;
 
-    if (this.currentEnd && this.boundsCache[this.currentTopic] && this.boundsCache[this.currentTopic].max) {
-      const tail = this.boundsCache[this.currentTopic].max;
-      if (Math.abs(tail.getTime() - this.currentEnd.getTime()) <= 5000) {
+    const tail = (b && b.max) ? new Date(b.max) : null;
+
+    // v0.7.1: If the window is currently at the tail, keep it pinned to the tail as
+    // new samples arrive, WITHOUT changing the selected span.
+    if (this.currentEnd && tail && prevTail) {
+      const wasAtTail = Math.abs(prevTail.getTime() - this.currentEnd.getTime()) <= 5000;
+      if (wasAtTail && tail.getTime() >= prevTail.getTime()) {
+        const windowMs = (this.currentStart && this.currentEnd) ? Math.max(1000, this.currentEnd - this.currentStart) : WINDOW_OPTIONS_MS[1];
         this.currentEnd = new Date(tail);
+        this.currentStart = new Date(this.currentEnd.getTime() - windowMs);
+
+        // Clamp to min bound if available.
+        if (b && b.min && this.currentStart < b.min) this.currentStart = new Date(b.min);
+
         this.setInputsFromDates(this.currentStart, this.currentEnd);
       }
     }
   }
+
 
   async plotFromInputs() {
     const topic = (document.getElementById('topicInput')?.value || '').trim();
@@ -160,7 +181,7 @@ export class SingleTopicPlot {
     if (!this.currentEnd) this.currentEnd = new Date(b.max);
 
     if (b && this.currentEnd && !this.currentStart) {
-      const defaultMs = 24 * 60 * 60 * 1000;
+      const defaultMs = WINDOW_OPTIONS_MS[1];
       this.currentStart = new Date(this.currentEnd.getTime() - defaultMs);
       const clamped = this.clampWindow(this.currentStart, this.currentEnd, b.min, b.max);
       this.currentStart = clamped.start;
@@ -187,7 +208,7 @@ export class SingleTopicPlot {
       title: topic,
       xaxis: { title: 'Time' },
       yaxis: { title: 'Value' }
-    });
+    }, { responsive: true, displaylogo: false, displayModeBar: false });
 
     if (!this.currentStart || !this.currentEnd) {
       const first = new Date(js[0].ts);

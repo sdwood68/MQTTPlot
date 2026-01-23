@@ -30,10 +30,10 @@ document.addEventListener('DOMContentLoaded', () => {
     singlePlot.plotFromInputs();
   });
   document.getElementById('btnBack')?.addEventListener('click', () => {
-    activePlot.slideWindow?.(-0.5);
+    activePlot.slideWindow?.(-1.0);
   });
   document.getElementById('btnFwd')?.addEventListener('click', () => {
-    activePlot.slideWindow?.(0.5);
+    activePlot.slideWindow?.(1.0);
   });
   document.getElementById('btnZoomIn')?.addEventListener('click', () => {
     activePlot.zoomIn?.();
