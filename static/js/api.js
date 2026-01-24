@@ -29,6 +29,10 @@ export async function getTopics() {
   return fetchJson('/api/topics');
 }
 
+export async function getTopicMeta(topic) {
+  return fetchJson(`/api/topic_meta?topic=${encodeURIComponent(topic)}`);
+}
+
 export async function getBounds(topic) {
   return fetchJson(`/api/bounds?topic=${encodeURIComponent(topic)}`);
 }
@@ -75,12 +79,34 @@ export async function deleteTopic(topic) {
   return true;
 }
 
+// Delete a root topic (e.g. "watergauge") and all its subtopics.
+export async function deleteRootTopic(rootName) {
+  const root = String(rootName || '').trim().replace(/^\/+|\/+$/g, '');
+  if (!root) {
+    throw new Error('Missing root topic');
+  }
+  const { resp, text } = await _fetchText(`/api/admin/root/${encodeURIComponent(root)}`, {
+    method: 'DELETE'
+  });
+  if (!resp.ok) {
+    const err = new Error(`HTTP ${resp.status} ${resp.statusText}`);
+    err.status = resp.status;
+    err.body = text;
+    throw err;
+  }
+  return true;
+}
+
 export async function sendOTA(baseTopic, otaValue) {
   return fetchJson('/api/admin/ota', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ base_topic: baseTopic, ota: otaValue })
   });
+}
+
+export async function getRetentionPolicies() {
+  return fetchJson('/api/admin/retention');
 }
 
 export async function saveRetentionPolicy(payload) {
@@ -123,4 +149,25 @@ export async function deleteAdminPublicPlot(slug) {
 export async function getMqttStatus() {
   // no-store to avoid stale UI
   return fetchJson('/api/mqtt/status', { cache: 'no-store' });
+}
+
+
+export async function getAdminSettings() {
+  return fetchJson('/api/admin/settings');
+}
+
+export async function saveAdminSettings(payload) {
+  return fetchJson('/api/admin/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function saveTopicMeta(payload) {
+  return fetchJson('/api/admin/topic_meta', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
 }

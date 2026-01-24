@@ -1,4 +1,4 @@
-import { getBounds as apiGetBounds, getData } from '../api.js';
+import { getBounds as apiGetBounds, getData, getTopicMeta } from '../api.js';
 
 // Same discrete window presets used by SingleTopicPlot
 // Discrete window presets (small -> large). Span is immutable unless the user changes presets.
@@ -18,6 +18,27 @@ const WINDOW_OPTIONS_MS = [
   14 * 24 * 60 * 60 * 1000,  // 2 weeks
   28 * 24 * 60 * 60 * 1000   // 4 weeks
 ];
+
+
+function tickDecimals(dtick) {
+  if (!dtick) return 0;
+  const x = Number(dtick);
+  if (!Number.isFinite(x) || x <= 0) return 0;
+  return Math.max(0, Math.min(6, Math.ceil(-Math.log10(x))));
+}
+
+function unitsLabel(units) {
+  switch (units) {
+    case 'distance_m': return 'Distance (m)';
+    case 'distance_ftin': return 'Distance (ft/in)';
+    case 'temp_f': return 'Temperature (°F)';
+    case 'temp_c': return 'Temperature (°C)';
+    case 'voltage_v': return 'Voltage (V)';
+    case 'other': return '';
+    default: return '';
+  }
+}
+
 
 export class MultiTopicPlotPreview {
   constructor({ plotDivId = 'plot' } = {}) {
@@ -224,8 +245,13 @@ export class MultiTopicPlotPreview {
     }
 
     const layout = this._buildLayout(spec);
+    await this._applyAxisSettings(layout, spec).catch(() => null);
     const config = { responsive: true, displaylogo: false, displayModeBar: false };
     await Plotly.react(this.plotDivId, traces, layout, config);
+
+    const pc = document.getElementById('plotControls');
+    if (pc) pc.style.display = 'block';
+    this.updateWindowUi();
   }  handleLiveMessage(msg) {
     if (!this.currentSpec) return;
     const idx = this.topicToTraceIndex.get(msg.topic);
@@ -332,4 +358,33 @@ export class MultiTopicPlotPreview {
     this.setInputsFromDates(this.currentStart, this.currentEnd);
     await this.plotFromSpec(this.currentSpec);
   }
+}
+
+function addPlotAreaBorder(layout, opts = {}) {
+  const lineColor = opts.color ?? "#666";
+  const lineWidth = opts.width ?? 1;
+
+  // Plotly uses [start,end] in "paper" coords for the plotting area.
+  // Defaults if not explicitly set.
+  const xd = (layout.xaxis && layout.xaxis.domain) ? layout.xaxis.domain : [0, 1];
+  const yd = (layout.yaxis && layout.yaxis.domain) ? layout.yaxis.domain : [0, 1];
+
+  layout.shapes = layout.shapes || [];
+
+  // Remove any previous plot-area border shape (optional safety)
+  layout.shapes = layout.shapes.filter(s => s.name !== "plotAreaBorder");
+
+  layout.shapes.push({
+    type: "rect",
+    name: "plotAreaBorder",
+    xref: "paper",
+    yref: "paper",
+    x0: xd[0],
+    x1: xd[1],
+    y0: yd[0],
+    y1: yd[1],
+    line: { color: lineColor, width: lineWidth },
+    fillcolor: "rgba(0,0,0,0)",
+    layer: "above"   // draws on top of plot background; use "below" if you prefer
+  });
 }

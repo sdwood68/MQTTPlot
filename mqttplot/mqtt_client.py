@@ -14,7 +14,7 @@ from dataclasses import dataclass
 import paho.mqtt.client as mqtt
 
 from . import config
-from .storage import store_topic_msg
+from .storage import store_topic_msg, get_app_meta_value
 
 logger = logging.getLogger(__name__)
 
@@ -136,9 +136,11 @@ def mqtt_worker(app, socketio, stop_event):
                 STATUS.last_attempt_ts = now
 
             try:
-                logger.info("MQTT attempting connect to %s:%s", config.MQTT_BROKER, config.MQTT_PORT)
+                broker = get_app_meta_value('mqtt.broker', None) or config.MQTT_BROKER
+                port = int(get_app_meta_value('mqtt.port', None) or config.MQTT_PORT)
+                logger.info("MQTT attempting connect to %s:%s", broker, port)
 
-                client.connect(config.MQTT_BROKER, config.MQTT_PORT, keepalive=60)
+                client.connect(broker, port, keepalive=60)
 
                 # Pump loop so on_connect fires
                 client.loop(timeout=1.0)

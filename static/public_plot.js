@@ -399,3 +399,33 @@ document.addEventListener('DOMContentLoaded', async () => {
     }, intervalMs);
   }
 });
+
+function addPlotAreaBorder(layout, opts = {}) {
+  const lineColor = opts.color ?? "#666";
+  const lineWidth = opts.width ?? 1;
+
+  // Plotly uses [start,end] in "paper" coords for the plotting area.
+  // Defaults if not explicitly set.
+  const xd = (layout.xaxis && layout.xaxis.domain) ? layout.xaxis.domain : [0, 1];
+  const yd = (layout.yaxis && layout.yaxis.domain) ? layout.yaxis.domain : [0, 1];
+
+  layout.shapes = layout.shapes || [];
+
+  // Remove any previous plot-area border shape (optional safety)
+  layout.shapes = layout.shapes.filter(s => s.name !== "plotAreaBorder");
+
+  layout.shapes.push({
+    type: "rect",
+    name: "plotAreaBorder",
+    xref: "paper",
+    yref: "paper",
+    x0: xd[0],
+    x1: xd[1],
+    y0: yd[0],
+    y1: yd[1],
+    line: { color: lineColor, width: lineWidth },
+    fillcolor: "rgba(0,0,0,0)",
+    layer: "above"   // draws on top of plot background; use "below" if you prefer
+  });
+}
+

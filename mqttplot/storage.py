@@ -308,7 +308,9 @@ def init_meta_db() -> None:
             enabled INTEGER NOT NULL DEFAULT 1,
             store_enabled INTEGER NOT NULL DEFAULT 1,
             max_msgs_per_min INTEGER,
-            auto_disabled INTEGER NOT NULL DEFAULT 0
+            auto_disabled INTEGER NOT NULL DEFAULT 0,
+            units TEXT,
+            min_tick_size REAL
         )
         """
     )
@@ -331,6 +333,31 @@ def init_meta_db() -> None:
 
     conn.commit()
     conn.close()
+
+
+
+def get_app_meta_value(key: str, default: str | None = None) -> str | None:
+    """Read app_meta key from the metadata DB (safe from non-Flask threads)."""
+    try:
+        con = _open_meta_con()
+        row = con.execute("SELECT value FROM app_meta WHERE key=?", (key,)).fetchone()
+        con.close()
+        if not row:
+            return default
+        return row[0]
+    except Exception:
+        return default
+
+
+def set_app_meta_value(key: str, value: str | None) -> None:
+    """Set app_meta key in the metadata DB (safe from non-Flask threads)."""
+    con = _open_meta_con()
+    if value is None:
+        con.execute("DELETE FROM app_meta WHERE key=?", (key,))
+    else:
+        con.execute("INSERT INTO app_meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, str(value)))
+    con.commit()
+    con.close()
 
 
 def record_app_version(version: str) -> None:

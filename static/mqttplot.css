@@ -67,6 +67,13 @@ input, button {
   display: inline-block;
 }
 
+.plot-container {
+    border: 1px solid #666;
+    border-radius: 4px;
+    padding: 4px;
+    background-color: #fff;
+}
+
 .mqtt-status {
   display: inline-block;
   padding: 6px 10px;
@@ -111,4 +118,49 @@ input, button {
   border-radius: 6px;
   font-size: 0.95rem;
   white-space: nowrap;
+}
+
+
+/* 0.8.0 admin settings + hierarchical topics */
+.admin-settings { padding: 8px 10px; border: 1px solid #ddd; border-radius: 6px; max-width: 1200px; }
+.admin-settings .settings-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.small-status { margin-left: 6px; font-size: 0.9em; opacity: 0.8; }
+.window-span { margin: 0 10px; font-weight: 600; }
+.topics-table { border-collapse: collapse; width: 100%; max-width: 1400px; }
+.topics-table th, .topics-table td { border: 1px solid #ddd; padding: 6px 8px; vertical-align: middle; }
+.topics-table th { text-align: left; background: #f7f7f7; }
+.topic-root { font-weight: 700; }
+.topic-sub { padding-left: 18px; }
+.topic-muted { opacity: 0.75; }
+.topic-input-compact { width: 110px; }
+.select-compact { width: 165px; }
+
+
+/* Admin Topics table - subtopic configuration layout (0.8.0.3) */
+.topic-config-sub{
+  display:flex;
+  gap:10px;
+  align-items:stretch;
+}
+.topic-config-left{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  flex:1 1 auto;
+  min-width: 280px;
+}
+.topic-config-row{
+  display:flex;
+  gap:8px;
+  align-items:center;
+  flex-wrap:nowrap;
+}
+.topic-config-right{
+  display:flex;
+  flex-direction:column;
+  justify-content:center; /* spans both rows visually */
+  align-items:flex-start;
+  gap:6px;
+  flex:0 0 auto;
+  white-space:nowrap;
 }

@@ -32,6 +32,7 @@ from version import __version__
 from . import config
 from .storage import (
     get_meta_db, close_meta_db, init_meta_db, record_app_version, init_admin_user,
+    get_app_meta_value, set_app_meta_value,
     topic_root, get_data_db, enforce_retention_for_topic, ensure_topic_db
 )
 from .mqtt_client import mqtt_worker, get_status
@@ -116,6 +117,20 @@ def api_set_config():
             PLOT_CONFIG[k] = data[k]
     return jsonify({'status':'ok','config':PLOT_CONFIG})
 
+
+@app.route("/api/topic_meta")
+def api_topic_meta():
+    topic = request.args.get("topic") or ""
+    topic = topic.strip()
+    if not topic:
+        return jsonify({"error": "missing topic"}), 400
+    db = get_meta_db()
+    row = db.execute("SELECT units, min_tick_size FROM topic_meta WHERE topic=?", (topic,)).fetchone()
+    if not row:
+        return jsonify({"topic": topic, "units": None, "min_tick_size": None})
+    return jsonify({"topic": topic, "units": row["units"], "min_tick_size": row["min_tick_size"]})
+
+
 @app.route("/api/topics")
 def api_meta_topics():
     """
@@ -131,6 +146,8 @@ def api_meta_topics():
         s.topic,
         s.message_count AS count,
         COALESCE(m.public, 1) AS public,
+        m.units AS units,
+        m.min_tick_size AS min_tick_size,
         s.first_seen_ts_epoch AS first_seen,
         s.last_seen_ts_epoch AS last_seen
     FROM topic_stats s
@@ -148,7 +165,7 @@ def api_meta_topics():
         if x is None:
             return None
         try:
-            return datetime.fromtimestamp(float(x)).isoformat()
+            return _dt_from_epoch_local(float(x)).isoformat()
         except Exception:
             return None
 
@@ -192,6 +209,22 @@ def api_plot_image():
     except Exception as e:
         return jsonify({'error':'image generation failed','detail':str(e)}),500
     buf.seek(0); return send_file(buf, mimetype='image/png')
+
+
+def get_time_zone() -> str:
+    tz = get_app_meta_value('app.timezone', None)
+    return tz or 'UTC'
+
+
+def _dt_from_epoch_local(epoch: float) -> datetime:
+    """Convert epoch seconds to a timezone-aware datetime using admin-configured time zone."""
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.fromtimestamp(float(epoch), tz=ZoneInfo(get_time_zone()))
+    except Exception:
+        # Fallback to local naive
+        return datetime.fromtimestamp(float(epoch))
+
 
 @app.route("/api/data")
 def api_data():
@@ -266,7 +299,7 @@ def _fetch_timeseries(topic: str, start: str | None, end: str | None, limit: int
     out = []
     for r in rows:
         out.append({
-            "ts": datetime.fromtimestamp(float(r["ts_epoch"])).isoformat(),
+            "ts": _dt_from_epoch_local(float(r["ts_epoch"])).isoformat(),
             "value": float(r["value"]) if r["value"] is not None else None,
         })
     return out
@@ -440,7 +473,7 @@ def index():
 
     return render_template(
         "index.html",
-        broker=f"{config.MQTT_BROKER}:{config.MQTT_PORT}",
+        broker=f"{get_app_meta_value('mqtt.broker', None) or config.MQTT_BROKER}:{int(get_app_meta_value('mqtt.port', None) or config.MQTT_PORT)}",
         admin=admin,
         admin_user=session.get("admin_user"),
         public_plots=public_plots,
@@ -650,6 +683,64 @@ def admin_delete_topic(topic):
         "deleted_rows": cur.rowcount
     })
 
+
+@app.route("/api/admin/root/<root>", methods=["DELETE"])
+def admin_delete_root(root: str):
+    """Delete ALL data + per-topic metadata for a root topic and its subtopics.
+
+    root is expected without leading slash (e.g. "watergauge").
+    """
+    require_admin()
+    if not is_admin():
+        return jsonify({"error": "admin required"}), 403
+
+    root = (root or "").strip().strip("/")
+    if not root:
+        return jsonify({"error": "missing root"}), 400
+
+    prefix = f"/{root}"
+    like = f"{prefix}/%"
+
+    # Delete message rows (data DB is partitioned by root; a single DELETE is sufficient).
+    data_db = get_data_db(prefix)
+    cur = data_db.execute(
+        "DELETE FROM messages WHERE topic=? OR topic LIKE ?",
+        (prefix, like),
+    )
+    data_db.commit()
+    data_db.close()
+
+    # Delete metadata rows (topic_stats/topic_meta/validation rules + retention policy)
+    db = get_meta_db()
+    cur_stats = db.execute("DELETE FROM topic_stats WHERE topic=? OR topic LIKE ?", (prefix, like))
+    cur_meta = db.execute("DELETE FROM topic_meta WHERE topic=? OR topic LIKE ?", (prefix, like))
+    # validation_rules table may not exist in older DBs
+    deleted_validation = 0
+    try:
+        cur_val = db.execute("DELETE FROM validation_rules WHERE topic=? OR topic LIKE ?", (prefix, like))
+        deleted_validation = cur_val.rowcount
+    except Exception:
+        deleted_validation = 0
+    # retention_policies table may not exist in older DBs
+    deleted_retention = 0
+    try:
+        cur_ret = db.execute("DELETE FROM retention_policies WHERE top_level=?", (root,))
+        deleted_retention = cur_ret.rowcount
+    except Exception:
+        deleted_retention = 0
+
+    db.commit()
+
+    return jsonify({
+        "status": "ok",
+        "root": root,
+        "deleted_rows": cur.rowcount,
+        "deleted_topic_stats": cur_stats.rowcount,
+        "deleted_topic_meta": cur_meta.rowcount,
+        "deleted_validation_rules": deleted_validation,
+        "deleted_retention_policies": deleted_retention,
+    })
+
 def publish_mqtt(topic, payload):
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
     if config.MQTT_USERNAME:
@@ -751,6 +842,77 @@ def admin_set_retention():
         "max_rows": max_rows
     })
 
+
+@app.route("/api/admin/settings", methods=["GET", "POST"])
+def api_admin_settings():
+    if not is_admin():
+        return jsonify({"error": "admin required"}), 403
+
+    if request.method == "GET":
+        timezone = get_app_meta_value('app.timezone', None) or 'UTC'
+        broker = {
+            "host": get_app_meta_value('mqtt.broker', None) or config.MQTT_BROKER,
+            "port": int(get_app_meta_value('mqtt.port', None) or config.MQTT_PORT),
+            "topics": get_app_meta_value('mqtt.topics', None) or config.MQTT_TOPICS,
+        }
+        return jsonify({"timezone": timezone, "broker": broker})
+
+    data = request.get_json(silent=True) or {}
+    tz = data.get("timezone")
+    if tz is not None:
+        tz = str(tz).strip()
+        if tz:
+            set_app_meta_value('app.timezone', tz)
+        else:
+            set_app_meta_value('app.timezone', None)
+
+    if "broker_host" in data or "broker_port" in data or "broker_topics" in data:
+        host = str(data.get("broker_host") or "").strip()
+        port = data.get("broker_port")
+        topics = str(data.get("broker_topics") or "").strip()
+
+        if host:
+            set_app_meta_value('mqtt.broker', host)
+        if port not in (None, ""):
+            try:
+                p = int(port)
+                if 1 <= p <= 65535:
+                    set_app_meta_value('mqtt.port', str(p))
+            except Exception:
+                pass
+        if topics:
+            set_app_meta_value('mqtt.topics', topics)
+
+    return jsonify({"status": "ok"})
+
+
+
+@app.route("/api/admin/topic_meta", methods=["POST"])
+def api_admin_topic_meta():
+    if not is_admin():
+        return jsonify({"error": "admin required"}), 403
+    data = request.get_json(silent=True) or {}
+    topic = (data.get("topic") or "").strip()
+    if not topic:
+        return jsonify({"error": "missing topic"}), 400
+    units = data.get("units")
+    min_tick_size = data.get("min_tick_size")
+    db = get_meta_db()
+    # Ensure row exists
+    db.execute("INSERT INTO topic_meta(topic) VALUES(?) ON CONFLICT(topic) DO NOTHING", (topic,))
+    if units is not None:
+        units = str(units).strip() or None
+        db.execute("UPDATE topic_meta SET units=? WHERE topic=?", (units, topic))
+    if min_tick_size not in (None, ""):
+        try:
+            mts = float(min_tick_size)
+        except Exception:
+            mts = None
+        db.execute("UPDATE topic_meta SET min_tick_size=? WHERE topic=?", (mts, topic))
+    db.commit()
+    return jsonify({"status": "ok"})
+
+
 @app.route("/api/admin/validation", methods=["GET"])
 def admin_get_validation():
     require_admin()
@@ -763,6 +925,8 @@ def admin_get_validation():
 
     cur = db.execute("SELECT topic, min_value, max_value, enabled FROM validation_rules ORDER BY topic")
     return jsonify([dict(r) for r in cur.fetchall()])
+
+
 
 @app.route("/api/admin/validation", methods=["POST"])
 def admin_set_validation():

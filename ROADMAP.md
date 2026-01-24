@@ -26,6 +26,11 @@ configuration (admin)**, and **public presentation (slug-based plots)**.
 - In-plot navigation and control widgets
 - Decoupling of plot definitions from MQTT topic names
 - Safe embedding via iframe for dashboards and wall displays
+
+---
+
+## Planned
+
 ### 0.7.1 - Bug Fixes, minor tweak to graphs
 - Plot time spans are not adhereing to the 2, 4, 8, 12 hour, 1, 3, 5 day, 1, 2, 4 weeks with 4 ours as the default. 
 - pressing the forward keeps zooming when you reach the lastest sample date instead of just stopping. It should not change the time span.
@@ -39,10 +44,6 @@ configuration (admin)**, and **public presentation (slug-based plots)**.
 - Fix the back button. If the data set is less than the window size it should do nothing.
 - Remove the Broker address from the public page
 
-
----
-
-## Planned
 
 ### 0.8.0 — Admin User Interface
 Focus: **Admin Interface Improvements**

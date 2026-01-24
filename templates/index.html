@@ -34,7 +34,37 @@
 
     <h2>MQTTPlot</h2>
     {% if admin %}
-      <p><b>Broker:</b> {{ broker }}</p>
+      <h3>Admin Settings</h3>
+      <div class="admin-settings">
+        <div class="settings-row">
+          <label>Time zone:
+            <input id="admin_tz" list="tzlist" placeholder="e.g. America/New_York">
+          </label>
+          <button id="btnSaveTz">Save</button>
+          <span id="tz_status" class="small-status"></span>
+        </div>
+        <datalist id="tzlist">
+          <option value="America/New_York"></option>
+          <option value="America/Chicago"></option>
+          <option value="America/Denver"></option>
+          <option value="America/Los_Angeles"></option>
+          <option value="UTC"></option>
+        </datalist>
+
+        <div class="settings-row" style="margin-top:8px;">
+          <label>Broker host:
+            <input id="broker_host" placeholder="e.g. 192.168.12.50">
+          </label>
+          <label>Port:
+            <input id="broker_port" type="number" min="1" max="65535" style="width:110px;">
+          </label>
+          <label>Topics:
+            <input id="broker_topics" placeholder="e.g. #">
+          </label>
+          <button id="btnSaveBroker">Save</button>
+          <span id="broker_status" class="small-status"></span>
+        </div>
+      </div>
     {% endif %}
 
     {% if admin %}
@@ -51,26 +81,25 @@
       <label>Topic:
           <input id="topicInput" list="topiclist">
       </label>
-      <!-- Start time remains optional for manual entry -->
-      <label>From:
-          <input id="start" placeholder="ISO time or epoch (optional)">
-      </label>
-
-      <!-- End time is no longer user-controlled; keep hidden for internal windowing -->
+      <!-- Start/end are internal windowing controls; admin UI no longer exposes manual "From" entry -->
+      <input id="start" type="hidden" value="">
       <input id="end" type="hidden" value="">
 
       <button id="btnPlot">Plot</button>
 
       <!-- v0.6.0 plot window controls -->
-      <div style="margin-top: 8px;">
+      <div id="plotControls" style="margin-top: 8px; display:none;">
           <button id="btnBack">◀ Back</button>
           <button id="btnFwd">Forward ▶</button>
           <button id="btnZoomIn">Zoom In</button>
+          <span id="windowSpan" class="window-span">Window = —</span>
           <button id="btnZoomOut">Zoom Out</button>
       </div>
 
       <datalist id="topiclist"></datalist>
-      <div id="plot"></div>
+      <div class="plot-container">
+        <div id="plot"></div>
+      </div>
     {% else %}
       <h3>Published Plots</h3>
       {% if public_plots and public_plots|length > 0 %}
@@ -91,30 +120,6 @@
           <button id="btnOtaEnter">Enter OTA</button>
           <button id="btnOtaExit">Exit OTA</button>
       </div>
-    {% endif %}
-
-    {% if admin %}
-    <hr>
-    <div class="admin-box">
-        <h3>Retention Policies (per Top-Level Topic)</h3>
-        <p>
-            Set <code>max_age_days</code> and/or <code>max_rows</code>. Leave blank to disable that limit.
-        </p>
-        <div>
-            <label>Top-level topic:
-                <input id="ret_top_level" placeholder="e.g. watergauge">
-            </label>
-            <label>Max age (days):
-                <input id="ret_max_age_days" type="number" min="1">
-            </label>
-            <label>Max rows:
-                <input id="ret_max_rows" type="number" min="1">
-            </label>
-            <button id="btnSaveRetention">Save retention</button>
-        </div>
-        <pre id="retention_status"></pre>
-        <hr>
-    </div>
     {% endif %}
 
     {% if admin %}

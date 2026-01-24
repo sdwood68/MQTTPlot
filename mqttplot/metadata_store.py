@@ -64,6 +64,10 @@ class MetadataStore:
             cur.execute("ALTER TABLE topic_meta ADD COLUMN auto_disabled INTEGER NOT NULL DEFAULT 0")
         if "enabled" not in cols:
             cur.execute("ALTER TABLE topic_meta ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1")
+        if "units" not in cols:
+            cur.execute("ALTER TABLE topic_meta ADD COLUMN units TEXT")
+        if "min_tick_size" not in cols:
+            cur.execute("ALTER TABLE topic_meta ADD COLUMN min_tick_size REAL")
 
         # topic_stats counters
         cols = {r["name"] for r in cur.execute("PRAGMA table_info(topic_stats)").fetchall()}

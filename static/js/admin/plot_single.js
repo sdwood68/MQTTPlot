@@ -1,4 +1,4 @@
-import { getBounds as apiGetBounds, getData } from '../api.js';
+import { getBounds as apiGetBounds, getData, getTopicMeta } from '../api.js';
 
 // Discrete window presets (small -> large). Span is immutable unless the user changes presets.
 // v0.7.1 presets:
@@ -17,6 +17,29 @@ const WINDOW_OPTIONS_MS = [
   14 * 24 * 60 * 60 * 1000,  // 2 weeks
   28 * 24 * 60 * 60 * 1000   // 4 weeks
 ];
+
+
+
+function formatUnitsLabel(units) {
+  switch (units) {
+    case 'distance_m': return 'Distance (m)';
+    case 'distance_ftin': return 'Distance (ft/in)';
+    case 'temp_f': return 'Temperature (°F)';
+    case 'temp_c': return 'Temperature (°C)';
+    case 'voltage_v': return 'Voltage (V)';
+    case 'other': return 'Value';
+    default: return 'Value';
+  }
+}
+
+function metersToFtIn(m) {
+  const inchesTotal = Math.round(Number(m) * 39.3700787);
+  const feet = Math.floor(inchesTotal / 12);
+  const inches = inchesTotal - (feet * 12);
+  return `${feet}' ${inches}"`;
+}
+
+
 
 export class SingleTopicPlot {
   constructor({ plotDivId = 'plot' } = {}) {
@@ -116,7 +139,7 @@ export class SingleTopicPlot {
 
   setCurrentTopic(topic) {
     this.currentTopic = topic || null;
-  }  handleLiveMessage(msg) {
+  } handleLiveMessage(msg) {
     if (!this.currentTopic || msg.topic !== this.currentTopic) return;
     this.safeExtend(msg.ts, msg.value);
 
@@ -171,6 +194,8 @@ export class SingleTopicPlot {
     this.setNavEnabled(!!b);
 
     if (!b) {
+      const pc = document.getElementById('plotControls');
+      if (pc) pc.style.display = 'none';
       this.currentStart = null;
       this.currentEnd = null;
       this.setInputsFromDates(null, null);
@@ -192,6 +217,8 @@ export class SingleTopicPlot {
     const js = await getData(topic, this.currentStart?.toISOString(), this.currentEnd?.toISOString());
 
     if (!js || js.length === 0) {
+      const pc = document.getElementById('plotControls');
+      if (pc) pc.style.display = 'none';
       const plotDiv = document.getElementById(this.plotDivId);
       if (plotDiv) plotDiv.innerHTML = 'No numeric data';
       return;
@@ -204,11 +231,108 @@ export class SingleTopicPlot {
       name: topic
     };
 
+    const meta = await getTopicMeta(topic).catch(() => null);
+
+    let yTitle = 'Value';
+    let dtick = null;
+    let units = null;
+    if (meta) {
+      units = meta.units || null;
+      if (units) yTitle = formatUnitsLabel(units);
+      if (meta.min_tick_size !== null && meta.min_tick_size !== undefined && meta.min_tick_size !== '') {
+        const mts = Number(meta.min_tick_size);
+        if (!Number.isNaN(mts) && mts > 0) dtick = mts;
+      }
+    }
+
+    // If a minimum tick size is defined, force a deterministic linear y-axis with:
+    //   - tick spacing = dtick
+    //   - a y-range that shows at least TWO intervals (=> at least 3 tick lines)
+    let yRange = null;
+    if (dtick) {
+      const ysAll = js.map(r => r.value).filter(v => typeof v === 'number' && !Number.isNaN(v));
+      if (ysAll.length) {
+        const minY = Math.min(...ysAll);
+        const maxY = Math.max(...ysAll);
+        const span = maxY - minY;
+
+        const desiredSpan = Math.max(span, 2 * dtick); // two intervals minimum
+        const mid = (minY + maxY) / 2;
+
+        let lo = mid - (desiredSpan / 2);
+        let hi = mid + (desiredSpan / 2);
+
+        // Align to dtick multiples so ticks land on clean divisions.
+        lo = Math.floor(lo / dtick) * dtick;
+        hi = Math.ceil(hi / dtick) * dtick;
+
+        // Guard: ensure we truly have >= 2*dtick span after alignment.
+        if ((hi - lo) < (2 * dtick)) hi = lo + (2 * dtick);
+
+        yRange = [lo, hi];
+      }
+    }
+
+
+    const yaxis = { title: yTitle };
+    if (dtick) {
+      yaxis.dtick = dtick;
+      yaxis.tickmode = 'linear';
+      if (yRange) yaxis.tick0 = yRange[0];
+      // Choose a sensible decimal precision so tick labels land on multiples of dtick.
+      const dec = Math.max(0, Math.min(6, Math.ceil(-Math.log10(dtick))));
+      yaxis.tickformat = dec === 0 ? 'd' : `.${dec}f`;
+      if (yRange) yaxis.range = yRange;
+    }
+
+    // Distance (ft/in) display: keep numeric axis in meters but render tick labels as ft/in when dtick is set.
+    if (units === 'distance_ftin' && dtick) {
+      const ys = js.map(r => r.value).filter(v => typeof v === 'number' && !Number.isNaN(v));
+      if (ys.length) {
+        const minY = Math.min(...ys);
+        const maxY = Math.max(...ys);
+
+        // Prefer the computed linear yRange so we guarantee >= 2 intervals on the axis.
+        let start;
+        let end;
+        if (yRange) {
+          start = yRange[0];
+          end = yRange[1];
+        } else {
+          start = Math.floor(minY / dtick) * dtick;
+          end = Math.ceil(maxY / dtick) * dtick;
+          if ((end - start) < (2 * dtick)) {
+            const mid = (minY + maxY) / 2;
+            const lo = mid - dtick;
+            const hi = mid + dtick;
+            start = Math.floor(lo / dtick) * dtick;
+            end = Math.ceil(hi / dtick) * dtick;
+          }
+        }
+        const tickvals = [];
+        const ticktext = [];
+        const maxTicks = 200;
+        for (let v = start, i = 0; v <= end + (dtick / 2) && i < maxTicks; v += dtick, i++) {
+          tickvals.push(v);
+          ticktext.push(metersToFtIn(v));
+        }
+        yaxis.tickmode = 'array';
+        yaxis.tickvals = tickvals;
+        yaxis.ticktext = ticktext;
+        yaxis.range = [start, end];
+      }
+    }
+
     Plotly.newPlot(this.plotDivId, [trace], {
       title: topic,
       xaxis: { title: 'Time' },
-      yaxis: { title: 'Value' }
+      yaxis
     }, { responsive: true, displaylogo: false, displayModeBar: false });
+
+    // Show controls only when a plot is present
+    const pc = document.getElementById('plotControls');
+    if (pc) pc.style.display = 'block';
+    this.updateWindowUi();
 
     if (!this.currentStart || !this.currentEnd) {
       const first = new Date(js[0].ts);
