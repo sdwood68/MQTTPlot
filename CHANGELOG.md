@@ -6,6 +6,23 @@ The format is based on Keep a Changelog and follows semantic versioning.
 
 ---
 
+## [0.7.2] - 2026-01-23
+
+### Added
+- Public plot "Live" indicator shown when the view is pinned to the latest sample.
+- Public endpoint to retrieve per-topic time bounds for published plots (`/api/public/bounds`) to support navigation clamping.
+
+### Changed
+- Zoom buttons now display the current time-window span.
+- Plotly chart title removed on public plot pages (title is shown in the fixed top bar).
+- Public plot zoom controls: the current window span is now displayed between the Zoom In/Zoom Out buttons, and each button label shows the span that will be applied if clicked.
+
+### Fixed
+- Back button on public plots: when the dataset is smaller than the selected window (or already at the earliest sample), Back does nothing.
+
+### Removed
+- Broker address from the non-admin landing page.
+
 ## [0.7.1.1] - 2026-01-23
 
 - Fix: Repair JavaScript syntax error in admin multi-topic preview module (`plot_multi.js`) that prevented admin topics list from loading.

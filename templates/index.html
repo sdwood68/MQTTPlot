@@ -33,7 +33,9 @@
     </div>
 
     <h2>MQTTPlot</h2>
-    <p><b>Broker:</b> {{ broker }}</p>
+    {% if admin %}
+      <p><b>Broker:</b> {{ broker }}</p>
+    {% endif %}
 
     {% if admin %}
     <div class="admin-box">

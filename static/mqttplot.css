@@ -91,3 +91,24 @@ input, button {
   background: #f2f2f2;
   border-color: #d0d0d0;
 }
+
+.live-indicator {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 1px solid #a6d8b7;
+  background: #e9f7ef;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+
+.window-label {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 1px solid #ddd;
+  background: #fff;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  white-space: nowrap;
+}

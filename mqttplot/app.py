@@ -271,6 +271,38 @@ def _fetch_timeseries(topic: str, start: str | None, end: str | None, limit: int
         })
     return out
 
+
+def _fetch_topic_bounds(topic: str) -> dict | None:
+    """Return {min_ts, max_ts} in ISO format for a topic, or None if not available."""
+    tl = topic_root(topic)
+    db_path = os.path.join(config.DATA_DB_DIR, f"{tl}.db")
+    if not os.path.exists(db_path):
+        return None
+
+    con = sqlite3.connect(db_path)
+    con.row_factory = sqlite3.Row
+    ensure_topic_db(con)
+
+    row = con.execute("SELECT id FROM topics WHERE topic=?", (topic,)).fetchone()
+    if not row:
+        con.close()
+        return None
+
+    topic_id = int(row["id"])
+    r = con.execute(
+        "SELECT MIN(ts_epoch) AS min_ts, MAX(ts_epoch) AS max_ts FROM messages WHERE topic_id=?",
+        (topic_id,),
+    ).fetchone()
+    con.close()
+
+    if r["min_ts"] is None or r["max_ts"] is None:
+        return None
+
+    return {
+        "min_ts": datetime.fromtimestamp(float(r["min_ts"])).isoformat(),
+        "max_ts": datetime.fromtimestamp(float(r["max_ts"])).isoformat(),
+    }
+
 @app.route("/api/bounds")
 def api_topic_bounds():
     """
@@ -282,35 +314,44 @@ def api_topic_bounds():
     if not topic:
         return jsonify({"error": "missing topic"}), 400
 
-    tl = topic_root(topic)
-    db_path = os.path.join(config.DATA_DB_DIR, f"{tl}.db")
-    if not os.path.exists(db_path):
+    b = _fetch_topic_bounds(topic)
+    if not b:
         return jsonify({"error": "no data"}), 404
+    return jsonify(b)
 
-    con = sqlite3.connect(db_path)
-    con.row_factory = sqlite3.Row
-    ensure_topic_db(con)
 
-    row = con.execute("SELECT id FROM topics WHERE topic=?", (topic,)).fetchone()
-    if not row:
-        con.close()
-        return jsonify({"error": "no data"}), 404
+@app.route('/api/public/bounds')
+def api_public_bounds():
+    """Topic bounds for a published plot (public). Enforces slug/topic association."""
+    slug = request.args.get('slug')
+    topic = request.args.get('topic')
+    if not slug or not topic:
+        return jsonify({'error': 'missing slug or topic'}), 400
 
-    topic_id = int(row["id"])
-
-    r = con.execute(
-        "SELECT MIN(ts_epoch) AS min_ts, MAX(ts_epoch) AS max_ts FROM messages WHERE topic_id=?",
-        (topic_id,),
+    db = get_meta_db()
+    row = db.execute(
+        "SELECT spec_json, published FROM public_plots WHERE slug=?",
+        (slug,),
     ).fetchone()
-    con.close()
+    if not row or int(row['published'] or 0) != 1:
+        return jsonify({'error': 'plot not found'}), 404
 
-    if r["min_ts"] is None or r["max_ts"] is None:
-        return jsonify({"error": "no data"}), 404
+    try:
+        spec = json.loads(row['spec_json'])
+    except Exception:
+        return jsonify({'error': 'invalid plot spec'}), 500
 
-    return jsonify({
-        "min_ts": datetime.fromtimestamp(float(r["min_ts"])).isoformat(),
-        "max_ts": datetime.fromtimestamp(float(r["max_ts"])).isoformat(),
-    })
+    allowed = set()
+    for t in (spec.get('topics') or []):
+        if isinstance(t, dict) and t.get('name'):
+            allowed.add(t['name'])
+    if topic not in allowed:
+        return jsonify({'error': 'topic not allowed for this plot'}), 403
+
+    b = _fetch_topic_bounds(topic)
+    if not b:
+        return jsonify({'error': 'no data'}), 404
+    return jsonify(b)
 
 
 @app.route('/viewer')

@@ -19,11 +19,13 @@
       {% endif %}
     </div>
 
-    <div style="padding: 6px 10px; border-top: 1px solid #ddd; display:flex; gap:8px; align-items:center; flex-wrap: wrap;">
-      <button id="btnBack">Back</button>
+    <div style="padding: 6px 10px; border-top: 1px solid #ddd; display:flex; gap:8px; align-items:center; flex-wrap: wrap;">      <button id="btnBack">Back</button>
       <button id="btnFwd">Forward</button>
       <button id="btnZoomIn">Zoom In</button>
-      <button id="btnZoomOut">Zoom Out</button>    </div>
+      <span id="windowLabel" class="window-label">Window = 4h</span>
+      <button id="btnZoomOut">Zoom Out</button>
+      <span id="liveIndicator" class="live-indicator" style="display:none;">Live</span>
+    </div>
   </div>
 
   <div id="plot"></div>

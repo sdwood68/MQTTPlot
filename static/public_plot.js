@@ -75,6 +75,84 @@ function clampEndToTail(end, tail) {
   return (end.getTime() > tail.getTime()) ? new Date(tail) : end;
 }
 
+function formatSpan(ms) {
+  const hour = 60 * 60 * 1000;
+  const day = 24 * hour;
+  const week = 7 * day;
+
+  if (ms % week === 0) {
+    const w = ms / week;
+    return `${w}w`;
+  }
+  if (ms % day === 0) {
+    const d = ms / day;
+    return `${d}d`;
+  }
+  if (ms % hour === 0) {
+    const h = ms / hour;
+    return `${h}h`;
+  }
+  // Fallback
+  return `${Math.round(ms / 1000)}s`;
+}
+
+function updateZoomButtonLabels(windowState) {
+  const spanMs = windowState?.spanMs || WINDOW_OPTIONS_MS[1];
+  const idx = nearestWindowIndex(spanMs);
+
+  const currentLabel = formatSpan(WINDOW_OPTIONS_MS[idx]);
+  const zinTarget = WINDOW_OPTIONS_MS[Math.max(0, idx - 1)];
+  const zoutTarget = WINDOW_OPTIONS_MS[Math.min(WINDOW_OPTIONS_MS.length - 1, idx + 1)];
+
+  const zin = $('btnZoomIn');
+  const zout = $('btnZoomOut');
+  const wlbl = $('windowLabel');
+
+  if (wlbl) wlbl.textContent = `Window = ${currentLabel}`;
+
+  if (zin) {
+    zin.textContent = `Zoom In (${formatSpan(zinTarget)})`;
+    zin.disabled = (idx === 0);
+  }
+  if (zout) {
+    zout.textContent = `Zoom Out (${formatSpan(zoutTarget)})`;
+    zout.disabled = (idx === WINDOW_OPTIONS_MS.length - 1);
+  }
+}
+
+function updateLiveIndicator(windowState) {
+  const el = $('liveIndicator');
+  if (!el) return;
+  const isLive = !!(windowState?.followTail && windowState?.tail && windowState?.end &&
+    Math.abs(windowState.tail.getTime() - windowState.end.getTime()) <= 5000);
+  el.style.display = isLive ? 'inline-block' : 'none';
+}
+
+async function loadBoundsForPlot(slug, plotSpec) {
+  const topics = Array.isArray(plotSpec?.topics) ? plotSpec.topics : [];
+  let minTs = null;
+  let maxTs = null;
+
+  for (const t of topics) {
+    const name = t?.name;
+    if (!name) continue;
+    try {
+      const b = await fetchJson(`/api/public/bounds?slug=${encodeURIComponent(slug)}&topic=${encodeURIComponent(name)}`);
+      const min = b?.min_ts ? new Date(b.min_ts) : null;
+      const max = b?.max_ts ? new Date(b.max_ts) : null;
+      if (min && !isNaN(min.getTime())) {
+        if (!minTs || min < minTs) minTs = min;
+      }
+      if (max && !isNaN(max.getTime())) {
+        if (!maxTs || max > maxTs) maxTs = max;
+      }
+    } catch (e) {
+      // ignore missing bounds for a topic (no data yet)
+    }
+  }
+  return { minTs, maxTs };
+}
+
 // Returns { traces, start, end, tail }
 async function loadSeriesForPlot(slug, plotSpec, windowState) {
   const now = new Date();
@@ -137,8 +215,9 @@ async function renderOnce(slug, windowState) {
   const { traces, start, end, tail } = await loadSeriesForPlot(slug, spec, windowState);
 
   const layout = {
-    title: specResp.title || spec.title || slug,
-    margin: { t: 60, l: 60, r: 60, b: 40 },
+    // Title is rendered in the fixed top bar; avoid duplicating it inside the plot.
+    title: '',
+    margin: { t: 20, l: 60, r: 60, b: 40 },
     xaxis: { title: 'Time' },
     yaxis: { title: '', nticks: 6, ticks: 'outside' },
     // Align major tick marks on y2 with y
@@ -148,6 +227,9 @@ async function renderOnce(slug, windowState) {
 
   const config = { responsive: true, displaylogo: false, displayModeBar: false };
   await Plotly.react('plot', traces, layout, config);
+
+  updateZoomButtonLabels(windowState);
+  updateLiveIndicator(windowState);
 
   return { specResp, spec, start, end, tail };
 }
@@ -164,7 +246,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   // - start/end: current displayed window
   // - tail: latest sample timestamp observed
   // - followTail: whether the window is pinned to the tail
-  const windowState = { spanMs: null, start: null, end: null, tail: null, followTail: true };
+  const windowState = {
+    spanMs: null,
+    start: null,
+    end: null,
+    tail: null,
+    minTs: null,
+    maxTs: null,
+    followTail: true
+  };
 
   let result;
   try {
@@ -178,17 +268,54 @@ document.addEventListener('DOMContentLoaded', async () => {
   windowState.end = result.end;
   windowState.tail = result.tail;
 
+  // Fetch overall bounds once to support navigation clamping.
+  // (If some topics have no data yet, they are ignored.)
+  try {
+    const b = await loadBoundsForPlot(slug, result.specResp.spec || result.specResp);
+    windowState.minTs = b.minTs;
+    windowState.maxTs = b.maxTs;
+  } catch (e) {
+    windowState.minTs = null;
+    windowState.maxTs = null;
+  }
+
+  updateZoomButtonLabels(windowState);
+  updateLiveIndicator(windowState);
+
   $('btnBack')?.addEventListener('click', async () => {
     const spanMs = windowState.spanMs || WINDOW_OPTIONS_MS[1];
+
+    // If the total dataset is smaller than the window, do nothing.
+    if (windowState.minTs && windowState.tail) {
+      const totalMs = windowState.tail.getTime() - windowState.minTs.getTime();
+      if (totalMs <= spanMs + 1000) {
+        updateLiveIndicator(windowState);
+        return;
+      }
+    }
+
+    // If we're already at the earliest possible window, do nothing.
+    if (windowState.minTs && windowState.start && windowState.start.getTime() <= windowState.minTs.getTime() + 1000) {
+      updateLiveIndicator(windowState);
+      return;
+    }
+
     windowState.followTail = false;
     windowState.end = new Date((windowState.end || new Date()).getTime() - spanMs);
     windowState.start = new Date(windowState.end.getTime() - spanMs);
+
+    // Clamp to earliest bound if known.
+    if (windowState.minTs && windowState.start < windowState.minTs) {
+      updateLiveIndicator(windowState);
+      return;
+    }
 
     const r = await renderOnce(slug, windowState).catch(() => null);
     if (r) {
       windowState.start = r.start;
       windowState.end = r.end;
       windowState.tail = r.tail;
+      updateLiveIndicator(windowState);
     }
   });
 
@@ -215,6 +342,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (windowState.tail && Math.abs(windowState.tail.getTime() - windowState.end.getTime()) <= 5000) {
         windowState.followTail = true;
       }
+
+      updateLiveIndicator(windowState);
     }
   });
 
@@ -232,6 +361,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       windowState.start = r.start;
       windowState.end = r.end;
       windowState.tail = r.tail;
+      updateZoomButtonLabels(windowState);
+      updateLiveIndicator(windowState);
     }
   });
 
@@ -248,6 +379,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       windowState.start = r.start;
       windowState.end = r.end;
       windowState.tail = r.tail;
+      updateZoomButtonLabels(windowState);
+      updateLiveIndicator(windowState);
     }
   });
 
@@ -261,6 +394,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         windowState.start = r.start;
         windowState.end = r.end;
         windowState.tail = r.tail;
+        updateLiveIndicator(windowState);
       }).catch(() => {});
     }, intervalMs);
   }
