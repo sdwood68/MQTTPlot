@@ -2,8 +2,6 @@
 
 **MQTTPlot** is a lightweight MQTT data ingestion and visualization service designed for long-running IoT and telemetry systems. It subscribes to MQTT topics, persists time-series data to SQLite, and serves interactive Plotly-based graphs via a web interface.
 
-Version **0.7.0** introduces **public, slug-based plot URLs**, **multi-topic plotting**, and **embeddable plot views**, enabling MQTTPlot to act as a read-only visualization endpoint without exposing internal configuration.
-
 ---
 
 ## Key Features
@@ -21,7 +19,7 @@ Version **0.7.0** introduces **public, slug-based plot URLs**, **multi-topic plo
 - In-plot navigation and controls
 - Preview thumbnails for plots
 
-### Public Access (New in 0.7.0)
+### Public Access
 - Slug-based public plot URLs
 - Read-only embedded plot views
 - No exposure of MQTT topics, database paths, or credentials
@@ -69,7 +67,7 @@ MQTTPlot consists of four layers:
                 │                                  │
                 ▼                                  ▼
 ┌──────────────────────────────┐     ┌──────────────────────────────┐
-│       4A) ADMIN UI           │     │      5B) PUBLIC PLOTS        │
+│       4A) ADMIN UI           │     │      4B) PUBLIC PLOTS        │
 │   (authenticated / private)  │     │     (read-only / shared)     │
 │                              │     │                              │
 │ • Configure plots            │     │ • Slug-based URLs            │
@@ -86,7 +84,7 @@ MQTTPlot consists of four layers:
 3. Plot routes query the database for a time window.
 4. Plotly renders interactive charts in the browser.
 
-### Separation of Concerns (0.7.0)
+### Separation of Concerns
 - **Admin** routes expose configuration tools and internal details (protected).
 - **Public** routes expose only plots via **slugs** (no internal topic names).
 
