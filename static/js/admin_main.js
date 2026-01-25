@@ -1,16 +1,54 @@
 import { initMqttStatusPolling } from './mqtt_status.js';
 import { loadTopics } from './admin/topics_ui.js';
-import { SingleTopicPlot } from './admin/plot_single.js';
-import { MultiTopicPlotPreview } from './admin/plot_multi.js';
-import { sendOTAFromInputs } from './admin/ota_retention.js';
+import { sendOTAFromInputs, saveRetentionFromInputs } from './admin/ota_retention.js';
 import { getAdminSettings, saveAdminSettings } from './api.js';
-import { refreshPublicPlots, savePublicPlotFromInputs, initPublicPlotsUI, getPublicPlotSpecFromInputs } from './admin/public_plots_ui.js';
+import {
+  refreshPublicPlots,
+  savePublicPlotFromInputs,
+  initPublicPlotsUI,
+  getPublicPlotSpecFromInputs
+} from './admin/public_plots_ui.js';
 
-// Admin entrypoint: wires UI, socket.io, and periodic refresh.
+// Admin entrypoint: wires UI and periodic refresh.
+
+const SPEC_KEY = 'mqttplot.plotSpec';
+
+function openPlotWindow(spec) {
+  if (!spec) return;
+
+  try {
+    localStorage.setItem(SPEC_KEY, JSON.stringify(spec));
+  } catch (e) {
+    console.error('Failed to persist plot spec:', e);
+    alert('Failed to open plot window (could not store plot spec).');
+    return;
+  }
+
+  // Reuse the same named window to avoid spam.
+  const w = window.open('/admin/plot_window', 'mqttplot_plot', 'width=1200,height=800');
+  if (!w) {
+    alert('Popup blocked. Allow popups for this site to preview plots.');
+    return;
+  }
+  try { w.focus(); } catch {}
+}
+
+function openTopicPlotWindow(topic) {
+  const t = String(topic || '').trim();
+  if (!t) return;
+  const url = `/admin/topic_plot?topic=${encodeURIComponent(t)}`;
+  const w = window.open(url, 'mqttplot_plot', 'width=1200,height=800');
+  if (!w) {
+    alert('Popup blocked. Allow popups for this site to view plots.');
+    return;
+  }
+  try { w.focus(); } catch {}
+}
+
+// Single-topic plotting is initiated by clicking a topic in the Topics table.
 
 document.addEventListener('DOMContentLoaded', () => {
   initMqttStatusPolling({ intervalMs: 5000 });
-
 
   // --- Admin settings (time zone, broker) ---
   initAdminSettings();
@@ -24,20 +62,17 @@ document.addEventListener('DOMContentLoaded', () => {
     const brokerStatus = document.getElementById('broker_status');
 
     try {
-      const s = await getAdminSettings();
-      if (tzEl && s?.timezone) tzEl.value = s.timezone;
-      if (hostEl && s?.broker?.host) hostEl.value = s.broker.host;
-      if (portEl && s?.broker?.port) portEl.value = s.broker.port;
-      if (topicsEl && s?.broker?.topics) topicsEl.value = s.broker.topics;
-    } catch (e) {
-      // Non-fatal
-      if (tzStatus) tzStatus.textContent = 'Unable to load settings';
-      if (brokerStatus) brokerStatus.textContent = 'Unable to load settings';
+      const settings = await getAdminSettings();
+      if (tzEl && settings.timezone) tzEl.value = settings.timezone;
+      if (hostEl && settings.broker_host) hostEl.value = settings.broker_host;
+      if (portEl && settings.broker_port) portEl.value = settings.broker_port;
+      if (topicsEl && settings.broker_topics) topicsEl.value = settings.broker_topics;
+    } catch {
+      // ignore; admin settings optional
     }
 
     document.getElementById('btnSaveTz')?.addEventListener('click', async () => {
-      if (!tzEl) return;
-      const timezone = (tzEl.value || '').trim();
+      const timezone = (tzEl?.value || '').trim();
       try {
         await saveAdminSettings({ timezone });
         if (tzStatus) tzStatus.textContent = 'Saved';
@@ -61,38 +96,18 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  const singlePlot = new SingleTopicPlot({ plotDivId: 'plot' });
-  const previewPlot = new MultiTopicPlotPreview({ plotDivId: 'plot' });
-  let activePlot = singlePlot;
+  // --- Plot wiring (popup windows) ---
 
-  // Socket.IO live updates (public stream)
-  const socket = io();
-  socket.on('new_data', (msg) => {
-    activePlot.handleLiveMessage?.(msg);
-  });
-  // Optional admin-only stream
-  socket.on('new_data_admin', (msg) => {
-    activePlot.handleLiveMessage?.(msg);
+  document.getElementById('btnPreviewPublicPlot')?.addEventListener('click', () => {
+    const spec = getPublicPlotSpecFromInputs();
+    if (!spec || !Array.isArray(spec.topics) || spec.topics.length === 0) {
+      alert('Add at least one topic to preview.');
+      return;
+    }
+    openPlotWindow(spec);
   });
 
-  // --- Button wiring (replaces inline onclicks) ---
-  document.getElementById('btnPlot')?.addEventListener('click', () => {
-    activePlot = singlePlot;
-    singlePlot.plotFromInputs();
-  });
-  document.getElementById('btnBack')?.addEventListener('click', () => {
-    activePlot.slideWindow?.(-1.0);
-  });
-  document.getElementById('btnFwd')?.addEventListener('click', () => {
-    activePlot.slideWindow?.(1.0);
-  });
-  document.getElementById('btnZoomIn')?.addEventListener('click', () => {
-    activePlot.zoomIn?.();
-  });
-  document.getElementById('btnZoomOut')?.addEventListener('click', () => {
-    activePlot.zoomOut?.();
-  });
-
+  // --- OTA / retention / public plots ---
   document.getElementById('btnOtaEnter')?.addEventListener('click', () => {
     sendOTAFromInputs(1);
   });
@@ -107,15 +122,6 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btnSavePublicPlot')?.addEventListener('click', () => {
     savePublicPlotFromInputs();
   });
-  document.getElementById('btnPreviewPublicPlot')?.addEventListener('click', () => {
-    const spec = getPublicPlotSpecFromInputs();
-    if (!spec || !Array.isArray(spec.topics) || spec.topics.length === 0) {
-      alert('Add at least one topic to preview.');
-      return;
-    }
-    activePlot = previewPlot;
-    previewPlot.plotFromSpec(spec);
-  });
   document.getElementById('btnRefreshPublicPlots')?.addEventListener('click', () => {
     refreshPublicPlots();
   });
@@ -126,9 +132,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // --- Topics list load + periodic refresh ---
   const refreshTopics = () => loadTopics({
     onSelectTopic: (topic) => {
-      singlePlot.invalidateBounds(topic);
-      activePlot = singlePlot;
-      singlePlot.plotFromInputs();
+      openTopicPlotWindow(topic);
     }
   });
 

@@ -30,7 +30,20 @@ export async function getTopics() {
 }
 
 export async function getTopicMeta(topic) {
-  return fetchJson(`/api/topic_meta?topic=${encodeURIComponent(topic)}`);
+  // Try exact topic first; if metadata is missing and the topic starts with '/', retry without the leading slash.
+  const t = (topic || '').toString();
+  const meta = await fetchJson(`/api/topic_meta?topic=${encodeURIComponent(t)}`);
+  if (meta && meta.units == null && meta.min_tick_size == null) {
+    const t2 = t.replace(/^\/+/, '');
+    if (t2 && t2 !== t) {
+      const meta2 = await fetchJson(`/api/topic_meta?topic=${encodeURIComponent(t2)}`);
+      // Preserve the original topic string for callers, but use any discovered metadata.
+      if (meta2 && (meta2.units != null || meta2.min_tick_size != null)) {
+        return { ...meta2, topic: t };
+      }
+    }
+  }
+  return meta;
 }
 
 export async function getBounds(topic) {

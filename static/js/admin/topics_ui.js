@@ -22,11 +22,9 @@ export async function loadTopics({ onSelectTopic } = {}) {
   const retentionMap = await safeFetchRetentionPolicies();
 
   const div = document.getElementById('topics');
-  const list = document.getElementById('topiclist');
-  if (!div || !list) return;
+  if (!div) return;
 
   div.innerHTML = '';
-  list.innerHTML = '';
 
   const table = document.createElement('table');
   table.className = 'topics-table';
@@ -103,8 +101,6 @@ export async function loadTopics({ onSelectTopic } = {}) {
       label.textContent = t.topic;
       label.style.cursor = 'pointer';
       label.addEventListener('click', () => {
-        const inp = document.getElementById('topicInput');
-        if (inp) inp.value = t.topic;
         if (typeof onSelectTopic === 'function') onSelectTopic(t.topic);
       });
       tdT.appendChild(label);
@@ -134,10 +130,6 @@ export async function loadTopics({ onSelectTopic } = {}) {
       row.appendChild(tdA);
 
       tbody.appendChild(row);
-
-      const opt = document.createElement('option');
-      opt.value = t.topic;
-      list.appendChild(opt);
     }
   }
 
@@ -245,6 +237,8 @@ function topicSettingsControls(topicRow, validationMap) {
     <option value="distance_ftin">Distance (ft/in)</option>
     <option value="temp_f">Temperature (°F)</option>
     <option value="temp_c">Temperature (°C)</option>
+    <option value="pressure_kpa">Pressure (kPa)</option>
+    <option value="humidity_rh">Humidity (%RH)</option>
     <option value="voltage_v">Voltage (V)</option>
     <option value="other">Other</option>
   `;

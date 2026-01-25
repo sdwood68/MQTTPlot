@@ -8,6 +8,7 @@
    - Plotly mode bar disabled
 */
 
+const Core = window.MQTTPlotCore || {};
 function $(id) { return document.getElementById(id); }
 
 function showError(msg) {
@@ -38,6 +39,66 @@ function buildTrace(series, topicSpec) {
     yaxis: (topicSpec?.yAxis === 'y2') ? 'y2' : 'y'
   };
 }
+
+function unitsLabel(units){ return (Core.unitsLabel ? Core.unitsLabel(units) : 'Value'); }
+}
+
+async function getTopicMeta(topic){ return (Core.getTopicMeta ? Core.getTopicMeta(topic) : {topic, units:null, min_tick_size:null}); }
+
+function tickDecimals(dtick) {
+  if (!dtick) return 0;
+  const x = Number(dtick);
+  if (!Number.isFinite(x) || x <= 0) return 0;
+  return Math.max(0, Math.min(6, Math.ceil(-Math.log10(x))));
+}
+
+function gcdInt(a, b) {
+  a = Math.abs(a);
+  b = Math.abs(b);
+  while (b) {
+    const t = b;
+    b = a % b;
+    a = t;
+  }
+  return a;
+}
+
+function lcmInt(a, b) {
+  if (!a || !b) return 0;
+  return Math.abs((a / gcdInt(a, b)) * b);
+}
+
+// Least common multiple for positive decimals (up to 6dp) so ticks stay aligned across multiple topics.
+function lcmFloat(a, b) {
+  const x = Number(a);
+  const y = Number(b);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || x <= 0 || y <= 0) return null;
+
+  const ax = x.toString();
+  const ay = y.toString();
+  const dx = ax.includes('.') ? ax.split('.')[1].length : 0;
+  const dy = ay.includes('.') ? ay.split('.')[1].length : 0;
+  const d = Math.min(6, Math.max(dx, dy));
+  const scale = Math.pow(10, d);
+  const ix = Math.round(x * scale);
+  const iy = Math.round(y * scale);
+  if (ix <= 0 || iy <= 0) return null;
+  return lcmInt(ix, iy) / scale;
+}
+
+function lcmFromSet(values) {
+  const arr = Array.from(values || []).map(Number).filter(v => Number.isFinite(v) && v > 0);
+  if (arr.length === 0) return null;
+  let out = arr[0];
+  for (let i = 1; i < arr.length; i++) {
+    const next = lcmFloat(out, arr[i]);
+    if (!next) return out;
+    out = next;
+  }
+  return out;
+}
+
+function enforceLinearTicks(axis, dtick){ if(Core.enforceLinearTicks) return Core.enforceLinearTicks(axis, dtick); }
 
 // Discrete window presets (small -> large). Span is immutable unless the user changes presets.
 // v0.7.1 presets:
@@ -212,6 +273,37 @@ async function renderOnce(slug, windowState) {
   const specResp = await fetchJson(`/api/public/plots/${encodeURIComponent(slug)}`);
   const spec = specResp.spec || specResp;
 
+  // Determine axis titles (units) from topic metadata.
+  const topics = Array.isArray(spec?.topics) ? spec.topics : [];
+  const metaByTopic = new Map();
+  await Promise.all(topics.map(async (t) => {
+    const name = t?.name;
+    if (!name) return;
+    metaByTopic.set(name, await getTopicMeta(name));
+  }));
+
+  const axisInfo = {
+    y: { units: new Set(), ticks: new Set(), has: false },
+    y2: { units: new Set(), ticks: new Set(), has: false }
+  };
+  for (const t of topics) {
+    const name = t?.name;
+    if (!name) continue;
+    const axis = (t?.yAxis === 'y2') ? 'y2' : 'y';
+    axisInfo[axis].has = true;
+    const meta = metaByTopic.get(name) || {};
+    const u = (meta.units || '').trim();
+    if (u) axisInfo[axis].units.add(u);
+    const n = Number(meta.min_tick_size);
+    if (Number.isFinite(n) && n > 0) axisInfo[axis].ticks.add(n);
+  }
+  const yUnits = axisInfo.y.units.size === 1 ? Array.from(axisInfo.y.units)[0] : null;
+  const y2Units = axisInfo.y2.units.size === 1 ? Array.from(axisInfo.y2.units)[0] : null;
+  // Tick spacing: use least-common-multiple of min_tick_size values per axis.
+  // This guarantees tick labels are multiples of all configured tick sizes.
+  const yTick = lcmFromSet(axisInfo.y.ticks);
+  const y2Tick = lcmFromSet(axisInfo.y2.ticks);
+
   const { traces, start, end, tail } = await loadSeriesForPlot(slug, spec, windowState);
 
   const layout = {
@@ -219,11 +311,15 @@ async function renderOnce(slug, windowState) {
     title: '',
     margin: { t: 20, l: 60, r: 60, b: 40 },
     xaxis: { title: 'Time' },
-    yaxis: { title: '', nticks: 6, ticks: 'outside' },
-    // Align major tick marks on y2 with y
-    yaxis2: { title: '', overlaying: 'y', side: 'right', tickmode: 'sync', nticks: 6, ticks: 'outside' },
+    yaxis: { title: { text: yUnits ? unitsLabel(yUnits) : 'Value' }, nticks: 6, ticks: 'outside' },
+    yaxis2: { title: { text: axisInfo.y2.has ? (y2Units ? unitsLabel(y2Units) : 'Value') : '' }, overlaying: 'y', side: 'right', nticks: 6, ticks: 'outside' },
     legend: { orientation: 'h' }
   };
+
+  if (yTick) enforceLinearTicks(layout.yaxis, yTick);
+  if (y2Tick) enforceLinearTicks(layout.yaxis2, y2Tick);
+
+  addPlotAreaBorder(layout);
 
   const config = { responsive: true, displaylogo: false, displayModeBar: false };
   await Plotly.react('plot', traces, layout, config);
@@ -400,32 +496,5 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 });
 
-function addPlotAreaBorder(layout, opts = {}) {
-  const lineColor = opts.color ?? "#666";
-  const lineWidth = opts.width ?? 1;
-
-  // Plotly uses [start,end] in "paper" coords for the plotting area.
-  // Defaults if not explicitly set.
-  const xd = (layout.xaxis && layout.xaxis.domain) ? layout.xaxis.domain : [0, 1];
-  const yd = (layout.yaxis && layout.yaxis.domain) ? layout.yaxis.domain : [0, 1];
-
-  layout.shapes = layout.shapes || [];
-
-  // Remove any previous plot-area border shape (optional safety)
-  layout.shapes = layout.shapes.filter(s => s.name !== "plotAreaBorder");
-
-  layout.shapes.push({
-    type: "rect",
-    name: "plotAreaBorder",
-    xref: "paper",
-    yref: "paper",
-    x0: xd[0],
-    x1: xd[1],
-    y0: yd[0],
-    y1: yd[1],
-    line: { color: lineColor, width: lineWidth },
-    fillcolor: "rgba(0,0,0,0)",
-    layer: "above"   // draws on top of plot background; use "below" if you prefer
-  });
-}
+function addPlotAreaBorder(layout){ if(Core.addPlotAreaBorder) return Core.addPlotAreaBorder(layout); }
 

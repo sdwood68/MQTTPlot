@@ -1,0 +1,65 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>{% block page_title %}MQTTPlot{% endblock %}</title>
+
+  <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+  <script src="/static/plot_core.js"></script>
+  {% block socketio %}{% endblock %}
+
+  <link rel="stylesheet" href="/static/mqttplot.css">
+  {% block page_script %}{% endblock %}
+  <link rel="stylesheet"
+    href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css">
+
+
+</head>
+
+<body class="{% block body_class %}{% endblock %}" {% block body_data %}{% endblock %}>
+  <div id="top-bar">
+    <div style="padding: 8px 10px;">
+      <h2 style="margin:0;" id="plotTitle">{% block header_title %}Plot{% endblock %}</h2>
+      <span style="opacity:0.75;" id="plotSubtitle">{% block header_subtitle %}{% endblock %}</span>
+      {% block header_description %}{% endblock %}
+    </div>
+
+    <div style="padding: 8px 10px;">
+      {% block header_right %}{% endblock %}
+    </div>
+  </div>
+
+  <!-- Start/end are internal windowing controls (harmless for pages that don't use them) -->
+  <input id="start" type="hidden" value="">
+  <input id="end" type="hidden" value="">
+
+  <div class="plot-data-box">
+    <div class="plot-controls">
+      <!-- Back -->
+      <button id="btnBack" title="Back" type="button">
+          <span class="mdi mdi-skip-backward"></span>
+      </button>
+      <!-- Zoom In -->
+      <button id="btnZoomIn" title="Zoom In" type="button">
+        <span class="mdi mdi-magnify-plus"></span>
+      </button>
+      <span id="windowLabel" class="window-label">Window = 4h</span>
+      <button id="btnZoomOut" title="Zoom Out" type="button">
+        <span class="mdi mdi-magnify-minus"></span>
+      </button>
+      <!-- Forward -->
+      <button id="btnFwd" title="Forward" type="button">
+          <span class="mdi mdi-skip-forward"></span>
+      </button>
+      <button id="liveIndicator" class="live-indicator" style="display:none;" disabled>Live</button>
+    </div>
+
+    <div id="plotStatus" style="margin-top: 6px; opacity: 0.85;"></div>
+    <div id="plot_error" class="admin-box" style="display:none; margin-top: 8px;"></div>
+  </div>
+
+  <div class="plot-area">
+    <div id="plot"></div>
+  </div>
+</body>
+</html>

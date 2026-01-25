@@ -460,6 +460,34 @@ def admin_logout():
     session.clear()
     return redirect("/")
 
+@app.route("/admin/plot_window")
+def admin_plot_window():
+    require_admin()
+    return render_template(
+        "admin_plot_window.html",
+        admin=True,
+        admin_user=session.get("admin_user"),
+    )
+
+
+@app.route("/admin/topic_plot")
+def admin_topic_plot_window():
+    """Admin-only, slug-style plot page for a single topic.
+
+    This is intentionally NOT published publicly. It exists to eliminate the
+    embedded admin preview and to provide a consistent, slug-like plot UI.
+    """
+    require_admin()
+    topic = (request.args.get("topic") or "").strip()
+    if not topic:
+        abort(400)
+    return render_template(
+        "admin_topic_plot.html",
+        topic=topic,
+        admin=True,
+        admin_user=session.get("admin_user"),
+    )
+
 @app.route('/')
 def index():
     admin = is_admin()

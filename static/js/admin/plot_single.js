@@ -26,6 +26,8 @@ function formatUnitsLabel(units) {
     case 'distance_ftin': return 'Distance (ft/in)';
     case 'temp_f': return 'Temperature (°F)';
     case 'temp_c': return 'Temperature (°C)';
+    case 'pressure_kpa': return 'Pressure (kPa)';
+    case 'humidity_rh': return 'Humidity (%RH)';
     case 'voltage_v': return 'Voltage (V)';
     case 'other': return 'Value';
     default: return 'Value';
@@ -254,31 +256,36 @@ export class SingleTopicPlot {
       if (ysAll.length) {
         const minY = Math.min(...ysAll);
         const maxY = Math.max(...ysAll);
-        const span = maxY - minY;
 
-        const desiredSpan = Math.max(span, 2 * dtick); // two intervals minimum
-        const mid = (minY + maxY) / 2;
+        // Minimal, stable range: show exactly two dtick intervals (=> 3 tick lines) centered near the data.
+        // Anchor midline to the nearest dtick multiple, then shift until the full data range is included.
+        let midTick = Math.round(((minY + maxY) / 2) / dtick) * dtick;
+        let lo = midTick - dtick;
+        let hi = midTick + dtick;
 
-        let lo = mid - (desiredSpan / 2);
-        let hi = mid + (desiredSpan / 2);
+        // Shift the 3-tick window up/down by dtick until it contains all data.
+        // (This preserves exact multiples of dtick in both range endpoints and tick labels.)
+        const maxShift = 1000; // safety guard
+        let i = 0;
+        while ((minY < lo || maxY > hi) && i < maxShift) {
+          if (minY < lo) { lo -= dtick; hi -= dtick; }
+          else if (maxY > hi) { lo += dtick; hi += dtick; }
+          i += 1;
+        }
 
-        // Align to dtick multiples so ticks land on clean divisions.
-        lo = Math.floor(lo / dtick) * dtick;
-        hi = Math.ceil(hi / dtick) * dtick;
-
-        // Guard: ensure we truly have >= 2*dtick span after alignment.
-        if ((hi - lo) < (2 * dtick)) hi = lo + (2 * dtick);
-
-        yRange = [lo, hi];
+        // Final guard: ensure sane numeric range.
+        if (Number.isFinite(lo) && Number.isFinite(hi) && hi > lo) {
+          yRange = [lo, hi];
+        }
       }
     }
 
 
-    const yaxis = { title: yTitle };
+    const yaxis = { title: { text: yTitle } };
     if (dtick) {
       yaxis.dtick = dtick;
       yaxis.tickmode = 'linear';
-      if (yRange) yaxis.tick0 = yRange[0];
+      yaxis.tick0 = yRange ? yRange[0] : 0;
       // Choose a sensible decimal precision so tick labels land on multiples of dtick.
       const dec = Math.max(0, Math.min(6, Math.ceil(-Math.log10(dtick))));
       yaxis.tickformat = dec === 0 ? 'd' : `.${dec}f`;
@@ -323,11 +330,15 @@ export class SingleTopicPlot {
       }
     }
 
-    Plotly.newPlot(this.plotDivId, [trace], {
-      title: topic,
+    const layout = {
+      title: '',
+      margin: { t: 20, l: 60, r: 60, b: 40 },
       xaxis: { title: 'Time' },
       yaxis
-    }, { responsive: true, displaylogo: false, displayModeBar: false });
+    };
+    addPlotAreaBorder(layout);
+
+    Plotly.react(this.plotDivId, [trace], layout, { responsive: true, displaylogo: false, displayModeBar: false });
 
     // Show controls only when a plot is present
     const pc = document.getElementById('plotControls');
@@ -441,4 +452,28 @@ export class SingleTopicPlot {
     this.setInputsFromDates(this.currentStart, this.currentEnd);
     await this.plotFromInputs();
   }
+}
+
+function addPlotAreaBorder(layout, opts = {}) {
+  const lineColor = opts.color ?? "#666";
+  const lineWidth = opts.width ?? 1;
+
+  const xd = (layout.xaxis && layout.xaxis.domain) ? layout.xaxis.domain : [0, 1];
+  const yd = (layout.yaxis && layout.yaxis.domain) ? layout.yaxis.domain : [0, 1];
+
+  layout.shapes = layout.shapes || [];
+  layout.shapes = layout.shapes.filter(s => s.name !== "plotAreaBorder");
+  layout.shapes.push({
+    type: "rect",
+    name: "plotAreaBorder",
+    xref: "paper",
+    yref: "paper",
+    x0: xd[0],
+    x1: xd[1],
+    y0: yd[0],
+    y1: yd[1],
+    line: { color: lineColor, width: lineWidth },
+    fillcolor: "rgba(0,0,0,0)",
+    layer: "above"
+  });
 }

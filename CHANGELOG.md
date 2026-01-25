@@ -1,53 +1,23 @@
 # Changelog
 
-## 0.8.0.6
-
-### Fixed
-- Plots: when **Min Tick** is defined, the y-axis now guarantees at least **two tick intervals** are visible by enforcing a deterministic linear axis (`tickmode=linear`, `tick0` aligned to range start) and a minimum y-range of `2 * Min Tick`. This prevents near-flat data (e.g., 69–70 with Min Tick=1) from collapsing to a single tick line.
-
-## 0.8.0.5
-
-### Changed
-- Plots: when a topic defines **Min Tick**, the y-axis is forced to span at least **2 divisions** (≥ `2 * Min Tick`), even when values are flat or nearly flat.
-
-## 0.8.0.4
-
-### Fixed
-- Admin Topics table regression: restored table rendering (0.8.0.3 had a broken `topics_ui.js` that prevented the table from loading).
-
-### Changed
-- Subtopic **Configuration** cell layout: Min/Max on the first line; Units + Min Tick on the second line; Save button on the right spanning both lines.
-
-## 0.8.0.3
-
-- Admin Topics table: subtopic Configuration cell now uses a 2-line layout (Min/Max on first line, Units + Min Tick on second) with Save button to the right spanning both lines.
-
-All notable changes to MQTTPlot are documented in this file.
-
-The format is based on Keep a Changelog and follows semantic versioning.
-
----
-
-## [0.8.0.2] - 2026-01-24
-
-### Changed
-- Admin Topics table: consolidated the 3rd column into **Configuration** (root rows show retention controls; subtopic rows show validation/units/min-tick controls).
+## [0.8.0] - 2026-01-25
 
 ### Added
-- Root-level **Delete** button: deletes the root topic and all subtopic data via `/api/admin/root/<root>`.
+- Admin UI: hierarchical **Root/Subtopic** topics table (root retention controls; subtopic configuration for validation limits, units, and **Min Tick**).
+- Admin settings: configurable **time zone** and MQTT broker (host/port/topics).
+- Plot system: canonical plot layout shared across public slug plots and admin plot windows.
+- Plot system: unified plot controller supporting **1–2 topics** with dual Y-axis support.
+- Plot controls: Back/Forward, Zoom In/Out, window-span label, and Live indicator.
 
-## [0.8.0.1] - 2026-01-24
+### Changed
+- Admin plotting workflow: removed embedded plot preview; plots open in a dedicated admin-only window and slug previews open in a popup.
+- Public plots: removed redundant Plotly title and broker address from the public page.
 
 ### Fixed
-- Flask startup crash: removed duplicate route definition for `/api/admin/topic_meta` (duplicate endpoint function name `api_admin_topic_meta`).
-
-## 0.8.0
-- Admin UI: hierarchical root/subtopic topics table
-- Root-topic retention controls integrated into the topics table
-- Admin settings: configurable time zone and MQTT broker (host/port/topics)
-- Plot controls only render when a plot is displayed; window span shown between zoom buttons
-- Topic settings: validation placeholders/limits, units dropdown, minimum y-axis tick size
-- Times returned with timezone offsets based on admin time zone setting
+- Flask startup crash caused by a duplicate admin topic-meta route.
+- Admin topics table regressions that prevented the table from rendering.
+- Plots: enforce deterministic y-axis ticks when **Min Tick** is set (linear ticks aligned to tick size) and guarantee at least **two tick intervals** are visible for near-flat data.
+- Plots: when two topics share an axis, tick spacing uses the **LCM** of their configured Min Tick sizes to keep labels aligned.
 
 ## [0.7.2.1] - 2026-01-23
 

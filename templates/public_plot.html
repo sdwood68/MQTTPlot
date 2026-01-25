@@ -1,37 +1,19 @@
-<!doctype html>
-<html>
+{% extends "plot_base.html" %}
 
-<head>
-  <meta charset="utf-8" />
-  <title>{{ title or ('MQTTPlot - ' ~ slug) }}</title>
+{% block page_title %}{{ title or ('MQTTPlot - ' ~ slug) }}{% endblock %}
 
-  <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
-  <link rel="stylesheet" href="/static/mqttplot.css">
-  <script src="/static/public_plot.js" defer></script>
-</head>
+{% block page_script %}<script src="/static/plot_page.js" defer></script>{% endblock %}
 
-<body data-slug="{{ slug }}">
-  <div id="top-bar">
-    <div style="padding: 8px 10px;">
-      <h2 style="margin:0;">{{ title or slug }}</h2>
-      {% if description %}
-      <div style="opacity:0.85;">{{ description }}</div>
-      {% endif %}
-    </div>
+{% block body_data %}data-mode="public" data-slug="{{ slug }}"{% endblock %}
 
-    <div style="padding: 6px 10px; border-top: 1px solid #ddd; display:flex; gap:8px; align-items:center; flex-wrap: wrap;">      <button id="btnBack">Back</button>
-      <button id="btnFwd">Forward</button>
-      <button id="btnZoomIn">Zoom In</button>
-      <span id="windowLabel" class="window-label">Window = 4h</span>
-      <button id="btnZoomOut">Zoom Out</button>
-      <span id="liveIndicator" class="live-indicator" style="display:none;">Live</span>
-    </div>
-  </div>
+{% block header_title %}{{ title or slug }}{% endblock %}
 
-  <div class="plot-container">
-    <div id="plot"></div>
-  </div>
-  <div id="plot_error" class="admin-box" style="display:none;"></div>
-</body>
+{% block header_subtitle %}{% endblock %}
 
-</html>
+{% block header_description %}
+  {% if description %}
+  <div style="opacity:0.85;">{{ description }}</div>
+  {% endif %}
+{% endblock %}
+
+{% block header_right %}{% endblock %}

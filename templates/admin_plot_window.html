@@ -1,0 +1,17 @@
+{% extends "plot_base.html" %}
+
+{% block page_title %}MQTTPlot - Plot{% endblock %}
+
+{% block socketio %}<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>{% endblock %}
+
+{% block page_script %}<script src="/static/plot_page.js" defer></script>{% endblock %}
+
+{% block body_class %}admin plot-window{% endblock %}
+{% block body_data %}data-mode="admin" data-source="spec"{% endblock %}
+
+{% block header_title %}Plot{% endblock %}
+{% block header_subtitle %}{% endblock %}
+
+{% block header_right %}
+  <button id="btnClose" type="button">Close</button>
+{% endblock %}

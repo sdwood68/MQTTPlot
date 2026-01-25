@@ -1,3 +1,4 @@
+const Core = window.MQTTPlotCore || {};
 import { getBounds as apiGetBounds, getData, getTopicMeta } from '../api.js';
 
 // Same discrete window presets used by SingleTopicPlot
@@ -27,16 +28,56 @@ function tickDecimals(dtick) {
   return Math.max(0, Math.min(6, Math.ceil(-Math.log10(x))));
 }
 
-function unitsLabel(units) {
-  switch (units) {
-    case 'distance_m': return 'Distance (m)';
-    case 'distance_ftin': return 'Distance (ft/in)';
-    case 'temp_f': return 'Temperature (°F)';
-    case 'temp_c': return 'Temperature (°C)';
-    case 'voltage_v': return 'Voltage (V)';
-    case 'other': return '';
-    default: return '';
+function gcdInt(a, b) {
+  a = Math.abs(a);
+  b = Math.abs(b);
+  while (b) {
+    const t = b;
+    b = a % b;
+    a = t;
   }
+  return a;
+}
+
+function lcmInt(a, b) {
+  if (!a || !b) return 0;
+  return Math.abs((a / gcdInt(a, b)) * b);
+}
+
+// Least common multiple for positive decimals (up to 6dp) so ticks stay aligned to both topics' min_tick_size.
+function lcmFloat(a, b) {
+  const x = Number(a);
+  const y = Number(b);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || x <= 0 || y <= 0) return null;
+
+  // Scale both to integers based on max decimal places.
+  const ax = x.toString();
+  const ay = y.toString();
+  const dx = ax.includes('.') ? ax.split('.')[1].length : 0;
+  const dy = ay.includes('.') ? ay.split('.')[1].length : 0;
+  const d = Math.min(6, Math.max(dx, dy));
+  const scale = Math.pow(10, d);
+  const ix = Math.round(x * scale);
+  const iy = Math.round(y * scale);
+  if (ix <= 0 || iy <= 0) return null;
+  return lcmInt(ix, iy) / scale;
+}
+
+function lcmFromSet(values) {
+  const arr = Array.from(values || []).map(Number).filter(v => Number.isFinite(v) && v > 0);
+  if (arr.length === 0) return null;
+  let out = arr[0];
+  for (let i = 1; i < arr.length; i++) {
+    const next = lcmFloat(out, arr[i]);
+    if (!next) return out;
+    out = next;
+  }
+  return out;
+}
+
+function enforceLinearTicks(axis, dtick){ if(Core.enforceLinearTicks) return Core.enforceLinearTicks(axis, dtick); }
+
+function unitsLabel(units){ return (Core.unitsLabel ? Core.unitsLabel(units) : 'Value'); }
 }
 
 
@@ -49,6 +90,54 @@ export class MultiTopicPlotPreview {
     this.boundsCache = {}; // topic -> {min: Date, max: Date} | undefined
     this.topicToTraceIndex = new Map();
     this.overallMax = null;
+  }
+
+  async _applyAxisSettings(layout, spec) {
+    // Apply axis titles (units) and dtick (min_tick_size) by inspecting topic metadata.
+    // Rule: if all topics on an axis share the same units, show that units label; otherwise fall back.
+    const topics = this._getTopicsFromSpec(spec);
+    if (!topics || topics.length === 0) return;
+
+    const metaByTopic = new Map();
+    await Promise.all(topics.map(async (t) => {
+      try {
+        const m = await getTopicMeta(t.name);
+        metaByTopic.set(t.name, m || {});
+      } catch {
+        metaByTopic.set(t.name, {});
+      }
+    }));
+
+    const axisInfo = {
+      y: { units: new Set(), ticks: new Set() },
+      y2: { units: new Set(), ticks: new Set() }
+    };
+
+    for (const t of topics) {
+      const axis = (t?.yAxis === 'y2') ? 'y2' : 'y';
+      const meta = metaByTopic.get(t.name) || {};
+      const u = (meta.units || '').trim();
+      if (u) axisInfo[axis].units.add(u);
+
+      const mts = meta.min_tick_size;
+      const n = Number(mts);
+      if (Number.isFinite(n) && n > 0) axisInfo[axis].ticks.add(n);
+    }
+
+    // Units labels
+    const yUnits = axisInfo.y.units.size === 1 ? Array.from(axisInfo.y.units)[0] : null;
+    const y2Units = axisInfo.y2.units.size === 1 ? Array.from(axisInfo.y2.units)[0] : null;
+    const y2HasTraces = topics.some(t => (t?.yAxis === 'y2'));
+    if (layout.yaxis) layout.yaxis.title = { text: yUnits ? unitsLabel(yUnits) : 'Value' };
+    if (layout.yaxis2) layout.yaxis2.title = { text: y2HasTraces ? (y2Units ? unitsLabel(y2Units) : 'Value') : '' };
+
+    // Tick spacing: use the least-common-multiple of min_tick_size values on each axis.
+    // This guarantees tick labels land on multiples of *both* topics when an axis contains >1 topic.
+    const yTick = lcmFromSet(axisInfo.y.ticks);
+    const y2Tick = lcmFromSet(axisInfo.y2.ticks);
+
+    if (layout.yaxis && yTick) enforceLinearTicks(layout.yaxis, yTick);
+    if (layout.yaxis2 && y2Tick) enforceLinearTicks(layout.yaxis2, y2Tick);
   }
 
 
@@ -246,6 +335,7 @@ export class MultiTopicPlotPreview {
 
     const layout = this._buildLayout(spec);
     await this._applyAxisSettings(layout, spec).catch(() => null);
+    addPlotAreaBorder(layout);
     const config = { responsive: true, displaylogo: false, displayModeBar: false };
     await Plotly.react(this.plotDivId, traces, layout, config);
 
@@ -360,31 +450,4 @@ export class MultiTopicPlotPreview {
   }
 }
 
-function addPlotAreaBorder(layout, opts = {}) {
-  const lineColor = opts.color ?? "#666";
-  const lineWidth = opts.width ?? 1;
-
-  // Plotly uses [start,end] in "paper" coords for the plotting area.
-  // Defaults if not explicitly set.
-  const xd = (layout.xaxis && layout.xaxis.domain) ? layout.xaxis.domain : [0, 1];
-  const yd = (layout.yaxis && layout.yaxis.domain) ? layout.yaxis.domain : [0, 1];
-
-  layout.shapes = layout.shapes || [];
-
-  // Remove any previous plot-area border shape (optional safety)
-  layout.shapes = layout.shapes.filter(s => s.name !== "plotAreaBorder");
-
-  layout.shapes.push({
-    type: "rect",
-    name: "plotAreaBorder",
-    xref: "paper",
-    yref: "paper",
-    x0: xd[0],
-    x1: xd[1],
-    y0: yd[0],
-    y1: yd[1],
-    line: { color: lineColor, width: lineWidth },
-    fillcolor: "rgba(0,0,0,0)",
-    layer: "above"   // draws on top of plot background; use "below" if you prefer
-  });
-}
+function addPlotAreaBorder(layout){ if(Core.addPlotAreaBorder) return Core.addPlotAreaBorder(layout); }
