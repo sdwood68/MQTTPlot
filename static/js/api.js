@@ -80,8 +80,11 @@ export async function saveValidationRule(payload) {
 }
 
 export async function deleteTopic(topic) {
-  const { resp, text } = await _fetchText(`/api/admin/topic/${encodeURIComponent(topic)}`, {
-    method: 'DELETE'
+  // Use JSON-body endpoint to avoid encoded-slash path issues on some servers/proxies.
+  const { resp, text } = await _fetchText(`/api/admin/topic_delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ topic })
   });
   if (!resp.ok) {
     const err = new Error(`HTTP ${resp.status} ${resp.statusText}`);

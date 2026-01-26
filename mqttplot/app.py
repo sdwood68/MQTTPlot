@@ -211,9 +211,24 @@ def api_plot_image():
     buf.seek(0); return send_file(buf, mimetype='image/png')
 
 
+def _default_system_tz() -> str:
+    """Best-effort default time zone for fresh installs.
+    Prefer the host's local ZoneInfo key when available; otherwise fall back to TZ or UTC.
+    """
+    try:
+        # datetime.now().astimezone().tzinfo is often a zoneinfo.ZoneInfo on Linux
+        tzinfo = datetime.now().astimezone().tzinfo
+        key = getattr(tzinfo, "key", None)
+        if key:
+            return str(key)
+    except Exception:
+        pass
+    return os.environ.get("TZ") or "UTC"
+
+
 def get_time_zone() -> str:
     tz = get_app_meta_value('app.timezone', None)
-    return tz or 'UTC'
+    return (tz or '').strip() or _default_system_tz()
 
 
 def _dt_from_epoch_local(epoch: float) -> datetime:
@@ -776,6 +791,39 @@ def publish_mqtt(topic, payload):
     client.connect(config.MQTT_BROKER, config.MQTT_PORT, 60)
     client.publish(topic, payload, qos=1, retain=False)
     client.disconnect()
+
+@app.route("/api/admin/topic_delete", methods=["POST"])
+def admin_delete_topic_post():
+    """Delete ALL data for a single topic. Uses JSON body to avoid encoded-slash path issues."""
+    require_admin()
+    payload = request.get_json(silent=True) or {}
+    topic = (payload.get("topic") or "").strip()
+    if not topic:
+        return jsonify({"error": "missing topic"}), 400
+
+    data_db = get_data_db(topic)
+    cur = data_db.execute("DELETE FROM messages WHERE topic = ?", (topic,))
+    data_db.commit()
+    data_db.close()
+
+    db = get_meta_db()
+    db.execute("DELETE FROM topic_stats WHERE topic = ?", (topic,))
+    db.commit()
+
+    return jsonify({"status": "ok", "topic": topic, "deleted_rows": cur.rowcount})
+
+
+@app.route("/api/admin/root_delete", methods=["POST"])
+def admin_delete_root_post():
+    """Delete ALL data + metadata for a root topic using JSON body."""
+    require_admin()
+    payload = request.get_json(silent=True) or {}
+    root = str(payload.get("root") or "").strip().replace("/", "")
+    if not root:
+        return jsonify({"error": "missing root"}), 400
+    # delegate to existing implementation for consistency
+    return admin_delete_root(root)
+
 
 @app.route("/api/admin/ota", methods=["POST"])
 def admin_ota():

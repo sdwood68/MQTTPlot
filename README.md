@@ -2,7 +2,7 @@
 
 **MQTTPlot** is a lightweight MQTT data ingestion and visualization service designed for long-running IoT and telemetry systems. It subscribes to MQTT topics, persists time-series data to SQLite, and serves interactive Plotly-based graphs via a web interface.
 
-Version **0.7.0** introduces **public, slug-based plot URLs**, **multi-topic plotting**, and **embeddable plot views**, enabling MQTTPlot to act as a read-only visualization endpoint without exposing internal configuration.
+Version **0.8.0** expands on the public viewer/admin workflow with a unified plot window, stronger topic hierarchy tools, retention/validation controls, and persistent app settings. **public, slug-based plot URLs**, **multi-topic plotting**, and **embeddable plot views**, enabling MQTTPlot to act as a read-only visualization endpoint without exposing internal configuration.
 
 ---
 
@@ -294,3 +294,29 @@ MQTTPlot follows semantic versioning:
 - 0.6.x – Single-topic plots, admin-centric UI
 - 0.7.0 – Public slugs, multi-topic plots, embedding
 - 0.8.x (planned) – Auth, dashboards, retention policies
+
+## Docker
+
+Build and run MQTTPlot using Docker:
+
+```bash
+docker build -t mqttplot:0.8.0.1 .
+
+# Example run: bind web port and persist data/db
+mkdir -p ./data
+
+docker run --rm -it \
+  -p 5000:5000 \
+  -e MQTT_BROKER=192.168.12.50 \
+  -e MQTT_PORT=1883 \
+  -e MQTT_TOPICS="#" \
+  -e DB_PATH=/data/mqtt_data.db \
+  -e DATA_DB_DIR=/data/topics \
+  -v "$(pwd)/data:/data" \
+  mqttplot:0.8.0.1
+```
+
+Notes:
+- `DB_PATH` is the metadata/admin database.
+- `DATA_DB_DIR` holds the per-top-level-topic SQLite DB files.
+

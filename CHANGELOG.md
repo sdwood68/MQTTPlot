@@ -1,5 +1,11 @@
 # Changelog
 
+### 0.8.0.1 - Bug Fixes
+- Fix admin delete-data actions by using a POST-based API (avoids encoded-slash issues and auth confusion).
+- Improve ISO time parsing (accepts Z/UTC) and default time zone behavior for fresh installs.
+- Stop auto-refresh on admin pages that resets form inputs; retain auto-updates only for live plots.
+- Fix Dockerfile and document Docker usage in README.
+- Update README version intro and remove redundant requirements.
 ## [0.8.0] - 2026-01-25
 
 ### Added

@@ -137,8 +137,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   refreshTopics();
-  setInterval(refreshTopics, 10000);
-
+  // No periodic refresh here: it resets form inputs. UI updates are event-driven.
   // --- Public plot list ---
   if (document.getElementById('public_plots_list')) refreshPublicPlots();
 });
