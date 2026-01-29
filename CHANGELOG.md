@@ -1,5 +1,18 @@
 # Changelog
 
+### 0.8.0.2 - Bug Fixes
+- Fix admin Topics auto-refresh: subtopic counts now update correctly by using stable row references (no selector escaping issues).
+- Restore live topic counts refresh without re-rendering the Topics table (protects all input fields).
+- Delete data now resets counts in-place instead of rebuilding the table.
+- Admin topic delete now purges messages but keeps the topic visible by resetting `topic_stats` counters instead of deleting the `topic_stats` row.
+- Fix admin topic delete to match per-root SQLite schema (messages keyed by topic_id; topics table stores topic strings).
+- Admin "Delete data" now purges stored messages for a subtopic **without removing the topic definition** from the topic list.
+- Fix Jinja template syntax error in CSRF meta tag rendering.
+- Fix admin delete actions by ensuring authenticated session cookies are included in admin fetch requests and by using JSON-body endpoints for both topic and root deletes.
+- Add CSRF token protection for admin state-changing API calls.
+- Installer now persists SECRET_KEY to avoid session invalidation across multi-process/reloader scenarios.
+
+
 ### 0.8.0.1 - Bug Fixes
 - Fix admin delete-data actions by using a POST-based API (avoids encoded-slash issues and auth confusion).
 - Improve ISO time parsing (accepts Z/UTC) and default time zone behavior for fresh installs.

@@ -2,6 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8" />
+    <meta name="csrf-token" content="{{ csrf_token or '' }}">
   <title>{% block page_title %}MQTTPlot{% endblock %}</title>
 
   <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>

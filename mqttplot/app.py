@@ -89,6 +89,17 @@ def require_admin():
     if not is_admin():
         abort(403)
 
+
+def require_csrf():
+    """Basic CSRF protection for admin state-changing endpoints.
+
+    Admin UI sets X-CSRF-Token from a meta tag populated server-side.
+    """
+    token = session.get("csrf_token")
+    header = request.headers.get("X-CSRF-Token")
+    if not token or not header or header != token:
+        abort(403)
+
 def parse_time(s):
     if not s:
         return None
@@ -464,6 +475,7 @@ def admin_login_page():
             session.clear()
             session["is_admin"] = True
             session["admin_user"] = username
+            session["csrf_token"] = secrets.token_urlsafe(32)
             return redirect("/")
 
         return render_template("admin_login.html", error="Invalid username or password")
@@ -482,6 +494,7 @@ def admin_plot_window():
         "admin_plot_window.html",
         admin=True,
         admin_user=session.get("admin_user"),
+        csrf_token=session.get("csrf_token"),
     )
 
 
@@ -520,6 +533,7 @@ def index():
         admin=admin,
         admin_user=session.get("admin_user"),
         public_plots=public_plots,
+        csrf_token=session.get("csrf_token"),
     )
 
 
@@ -707,6 +721,7 @@ def admin_public_plots_delete(slug: str):
 @app.route("/api/admin/topic/<path:topic>", methods=["DELETE"])
 def admin_delete_topic(topic):
     require_admin()
+    require_csrf()
     if not is_admin():
         return jsonify({"error": "admin required"}), 403
 
@@ -717,7 +732,18 @@ def admin_delete_topic(topic):
 
     # Remove from topic_stats (main DB), keep topic_meta (visibility) unless you prefer to remove it too
     db = get_meta_db()
-    db.execute("DELETE FROM topic_stats WHERE topic = ?", (topic,))
+    # Keep the topic visible; purge counters instead of deleting the row.
+    db.execute(
+        """UPDATE topic_stats
+               SET first_seen_ts_epoch = NULL,
+                   last_seen_ts_epoch  = NULL,
+                   message_count       = 0,
+                   last_value          = NULL,
+                   stored_count        = 0,
+                   dropped_count       = 0
+             WHERE topic = ?""",
+        (topic,),
+    )
     db.commit()
 
     return jsonify({
@@ -796,27 +822,49 @@ def publish_mqtt(topic, payload):
 def admin_delete_topic_post():
     """Delete ALL data for a single topic. Uses JSON body to avoid encoded-slash path issues."""
     require_admin()
+    require_csrf()
     payload = request.get_json(silent=True) or {}
     topic = (payload.get("topic") or "").strip()
     if not topic:
         return jsonify({"error": "missing topic"}), 400
 
+    # Data DB schema stores topics in a separate table; messages reference topic_id
     data_db = get_data_db(topic)
-    cur = data_db.execute("DELETE FROM messages WHERE topic = ?", (topic,))
-    data_db.commit()
+    topic_row = data_db.execute("SELECT id FROM topics WHERE topic = ?", (topic,)).fetchone()
+    deleted_rows = 0
+    if topic_row:
+        topic_id = int(topic_row[0])
+        cur = data_db.execute("DELETE FROM messages WHERE topic_id = ?", (topic_id,))
+        deleted_rows = cur.rowcount
+        # Optional: remove the topic row so a re-ingest will recreate it cleanly
+        # NOTE: keep topic definition so it remains in topic list
+        # data_db.execute("DELETE FROM topics WHERE id = ?", (topic_id,))
+        data_db.commit()
     data_db.close()
 
     db = get_meta_db()
-    db.execute("DELETE FROM topic_stats WHERE topic = ?", (topic,))
+    # Keep the topic visible; purge counters instead of deleting the row.
+    db.execute(
+        """UPDATE topic_stats
+               SET first_seen_ts_epoch = NULL,
+                   last_seen_ts_epoch  = NULL,
+                   message_count       = 0,
+                   last_value          = NULL,
+                   stored_count        = 0,
+                   dropped_count       = 0
+             WHERE topic = ?""",
+        (topic,),
+    )
     db.commit()
 
-    return jsonify({"status": "ok", "topic": topic, "deleted_rows": cur.rowcount})
+    return jsonify({"status": "ok", "topic": topic, "deleted_rows": deleted_rows})
 
 
 @app.route("/api/admin/root_delete", methods=["POST"])
 def admin_delete_root_post():
     """Delete ALL data + metadata for a root topic using JSON body."""
     require_admin()
+    require_csrf()
     payload = request.get_json(silent=True) or {}
     root = str(payload.get("root") or "").strip().replace("/", "")
     if not root:
@@ -828,6 +876,7 @@ def admin_delete_root_post():
 @app.route("/api/admin/ota", methods=["POST"])
 def admin_ota():
     require_admin()
+    require_csrf()
     if not is_admin():
         return jsonify({"error": "admin required"}), 403
 
@@ -850,6 +899,7 @@ def admin_ota():
 @app.route('/api/admin/topic_visibility', methods=['POST'])
 def admin_topic_visibility():
     require_admin()
+    require_csrf()
     data = request.get_json()
     topic = data['topic']
     public = 1 if data['public'] else 0
@@ -867,6 +917,7 @@ def admin_topic_visibility():
 @app.route("/api/admin/retention", methods=["GET"])
 def admin_get_retention():
     require_admin()
+    require_csrf()
     db = get_meta_db()
     cur = db.execute("SELECT top_level, max_age_days, max_rows FROM retention_policies ORDER BY top_level")
     return jsonify([dict(r) for r in cur.fetchall()])

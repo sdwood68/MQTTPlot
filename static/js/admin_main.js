@@ -1,5 +1,5 @@
 import { initMqttStatusPolling } from './mqtt_status.js';
-import { loadTopics } from './admin/topics_ui.js';
+import { loadTopics, refreshTopicCounts } from './admin/topics_ui.js';
 import { sendOTAFromInputs, saveRetentionFromInputs } from './admin/ota_retention.js';
 import { getAdminSettings, saveAdminSettings } from './api.js';
 import {
@@ -129,15 +129,21 @@ document.addEventListener('DOMContentLoaded', () => {
   // Public plots structured editor
   initPublicPlotsUI();
 
-  // --- Topics list load + periodic refresh ---
-  const refreshTopics = () => loadTopics({
+  // --- Topics list load + safe count refresh ---
+  const loadTopicsOnce = () => loadTopics({
     onSelectTopic: (topic) => {
       openTopicPlotWindow(topic);
     }
   });
 
-  refreshTopics();
-  // No periodic refresh here: it resets form inputs. UI updates are event-driven.
+  loadTopicsOnce();
+
+  // Periodically refresh only the counters / last-seen fields in-place.
+  // This avoids re-rendering the table, which would wipe in-progress edits.
+  setInterval(() => {
+    refreshTopicCounts();
+  }, 5000);
+
   // --- Public plot list ---
   if (document.getElementById('public_plots_list')) refreshPublicPlots();
 });

@@ -1,7 +1,24 @@
 // Shared API helpers for MQTTPlot
 
+
+function getCsrfToken() {
+  const el = document.querySelector('meta[name="csrf-token"]');
+  return el ? el.getAttribute('content') : null;
+}
+
 async function _fetchText(url, options) {
-  const resp = await fetch(url, options);
+  const opts = options ? { ...options } : {};
+  if (!("credentials" in opts)) opts.credentials = "same-origin";
+  // Add CSRF token automatically for admin state-changing calls
+  const method = (opts.method || "GET").toUpperCase();
+  if (url.startsWith("/api/admin/") && method !== "GET") {
+    const t = getCsrfToken();
+    if (t) {
+      opts.headers = opts.headers ? { ...opts.headers } : {};
+      if (!("X-CSRF-Token" in opts.headers)) opts.headers["X-CSRF-Token"] = t;
+    }
+  }
+  const resp = await fetch(url, opts);
   const text = await resp.text();
   return { resp, text };
 }
@@ -101,8 +118,10 @@ export async function deleteRootTopic(rootName) {
   if (!root) {
     throw new Error('Missing root topic');
   }
-  const { resp, text } = await _fetchText(`/api/admin/root/${encodeURIComponent(root)}`, {
-    method: 'DELETE'
+  const { resp, text } = await _fetchText(`/api/admin/root_delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ root })
   });
   if (!resp.ok) {
     const err = new Error(`HTTP ${resp.status} ${resp.statusText}`);
