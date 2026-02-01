@@ -21,6 +21,7 @@ if ASYNC_MODE == "eventlet":
 import io, json, time, threading, sqlite3, logging
 from datetime import datetime, timedelta
 from flask import Flask, jsonify, request, render_template, send_file
+from flask import current_app
 from flask import session, redirect, abort, url_for
 from flask_socketio import SocketIO
 import paho.mqtt.client as mqtt
@@ -290,6 +291,11 @@ def _fetch_timeseries(topic: str, start: str | None, end: str | None, limit: int
 
     tl = topic_root(topic)
     db_path = os.path.join(config.DATA_DB_DIR, f"{tl}.db")
+    try:
+        current_app.logger.info("FETCH timeseries topic=%s root=%s db_path=%s exists=%s start=%s end=%s limit=%s",
+                              topic, tl, db_path, os.path.exists(db_path), start_epoch, end_epoch, limit)
+    except Exception:
+        pass
     if not os.path.exists(db_path):
         return []
 
@@ -321,6 +327,10 @@ def _fetch_timeseries(topic: str, start: str | None, end: str | None, limit: int
 
     rows = con.execute(sql, tuple(params)).fetchall()
     con.close()
+    try:
+        current_app.logger.info("FETCH timeseries result topic=%s rows=%s", topic, len(rows))
+    except Exception:
+        pass
 
     out = []
     for r in rows:
@@ -335,6 +345,10 @@ def _fetch_topic_bounds(topic: str) -> dict | None:
     """Return {min_ts, max_ts} in ISO format for a topic, or None if not available."""
     tl = topic_root(topic)
     db_path = os.path.join(config.DATA_DB_DIR, f"{tl}.db")
+    try:
+        current_app.logger.info("FETCH bounds topic=%s root=%s db_path=%s exists=%s", topic, tl, db_path, os.path.exists(db_path))
+    except Exception:
+        pass
     if not os.path.exists(db_path):
         return None
 
@@ -354,6 +368,10 @@ def _fetch_topic_bounds(topic: str) -> dict | None:
     ).fetchone()
     con.close()
 
+    try:
+        current_app.logger.info("FETCH bounds result topic=%s min=%s max=%s", topic, r["min_ts"], r["max_ts"])
+    except Exception:
+        pass
     if r["min_ts"] is None or r["max_ts"] is None:
         return None
 
@@ -452,12 +470,22 @@ def viewer():
 
 @app.route("/api/version")
 def api_version():
-    db = sqlite3.connect(config.DB_PATH)
-    cur = db.cursor()
-    cur.execute("SELECT value FROM metadata WHERE key='app_version'")
-    row = cur.fetchone()
-    db.close()
-    return {"version": row[0] if row else "unknown"}
+    """Return running application version.
+
+    This endpoint must be resilient on fresh installs and across DB migrations.
+    """
+    # Prefer stored app_meta value if present, but never fail.
+    try:
+        v = get_app_meta_value("app_version")
+        if v:
+            return jsonify({"version": v})
+    except Exception:
+        # Avoid 500s if metadata DB schema is mid-migration.
+        try:
+            current_app.logger.exception("api_version: failed reading app_meta")
+        except Exception:
+            pass
+    return jsonify({"version": __version__})
 
 @app.route("/admin/login", methods=["GET", "POST"])
 def admin_login_page():

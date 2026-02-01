@@ -12,13 +12,17 @@
 - Add CSRF token protection for admin state-changing API calls.
 - Installer now persists SECRET_KEY to avoid session invalidation across multi-process/reloader scenarios.
 
-
 ### 0.8.0.1 - Bug Fixes
 - Fix admin delete-data actions by using a POST-based API (avoids encoded-slash issues and auth confusion).
 - Improve ISO time parsing (accepts Z/UTC) and default time zone behavior for fresh installs.
 - Stop auto-refresh on admin pages that resets form inputs; retain auto-updates only for live plots.
 - Fix Dockerfile and document Docker usage in README.
 - Update README version intro and remove redundant requirements.
+## 0.8.0.10 - Installer + Diagnostics
+- Fix `/api/version` to avoid metadata-table dependency (prevents 500 on installs with older/newer schema).
+- Installer now writes `DATA_DB_DIR` to `secret.env` and guards `DB_PATH` against directory values.
+- Add diagnostic logs for plot reads: resolved per-root DB path, time bounds, and row counts.
+
 ## [0.8.0] - 2026-01-25
 
 ### Added

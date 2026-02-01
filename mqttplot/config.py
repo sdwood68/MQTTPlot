@@ -6,6 +6,10 @@ import os
 # Primary (legacy) metadata DB (admin users, rules, app version, etc.)
 DB_PATH: str = os.environ.get("DB_PATH", "/opt/mqttplot/mqtt_data.db")
 
+# Normalize DB_PATH: if user sets it to a directory, assume metadata DB file within it.
+if os.path.isdir(DB_PATH):
+    DB_PATH = os.path.join(DB_PATH, "mqtt_data.db")
+
 # Directory containing per-top-level-topic SQLite databases.
 DATA_DB_DIR: str = os.environ.get("DATA_DB_DIR", "/opt/mqttplot/data")
 
@@ -31,4 +35,3 @@ MQTT_RETRY_BASE_SECONDS = float(os.getenv("MQTT_RETRY_BASE_SECONDS", "2"))
 MQTT_RETRY_MAX_SECONDS  = float(os.getenv("MQTT_RETRY_MAX_SECONDS", "60"))
 MQTT_CONNECT_TIMEOUT_SECONDS = float(os.getenv("MQTT_CONNECT_TIMEOUT_SECONDS", "5"))
 MQTT_ENABLED = os.getenv("MQTT_ENABLED", "1") not in ("0", "false", "False", "no", "NO")
-
