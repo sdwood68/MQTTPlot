@@ -1,5 +1,13 @@
 # Changelog
 
+### 0.8.1 - Admin Page Clean-up
+- Top bar: move the app title to the center of the floating banner (between MQTT status and Admin logout).
+- Rename **Admin Settings** to **Broker Settings**.
+- Broker Settings UI now shows current time zone and broker host/port/topics, with a time zone dropdown selector.
+- Remove the redundant "Admin Mode Enabled" banner.
+- Topics table: root rows no longer force a leading `/` (only shown when the underlying topics use it).
+- Units dropdown: rename "Distance (ft/in)" → "feet" and "Distance (m)" → "meters".
+
 ### 0.8.0.2 - Bug Fixes
 - Fix admin Topics auto-refresh: subtopic counts now update correctly by using stable row references (no selector escaping issues).
 - Restore live topic counts refresh without re-rendering the Topics table (protects all input fields).

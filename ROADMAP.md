@@ -62,6 +62,7 @@ This document outlines the planned evolution of MQTTPlot following the 0.8.0 rel
   - The root topic has a forward slach in fron of it, but the root topic does not use the '/'. Make sure it reflect the actual topic name and does not automaticly insert '/' if it is not used.
   - Change units 'Distance (ft/in)' to just 'feet'
   - Change units 'Distance (m)' to just 'meters'
+- Never Store the subtopic 'ota' That is a controll channel for the device.
 
 ### 0.8.2 - Ignore Topics, Flooding and bad data.
 

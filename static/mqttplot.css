@@ -65,6 +65,24 @@ button {
   border-radius: 6px;
 }
 
+
+
+#app-title {
+  flex: 1;
+  text-align: center;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  background: rgba(255, 255, 255, 0.9);
+  padding: 6px 10px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+}
+
+.settings-current {
+  display: inline-block;
+  font-size: 0.95rem;
+}
+
 #admin-bar a,
 #admin-bar span {
   margin-left: 8px;

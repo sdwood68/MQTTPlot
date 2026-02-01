@@ -2,7 +2,7 @@
 
 **MQTTPlot** is a lightweight MQTT data ingestion and visualization service designed for long-running IoT and telemetry systems. It subscribes to MQTT topics, persists time-series data to SQLite, and serves interactive Plotly-based graphs via a web interface.
 
-Version **0.8.0** expands on the public viewer/admin workflow with a unified plot window, stronger topic hierarchy tools, retention/validation controls, and persistent app settings. **public, slug-based plot URLs**, **multi-topic plotting**, and **embeddable plot views**, enabling MQTTPlot to act as a read-only visualization endpoint without exposing internal configuration.
+Version **0.8.1** expands on the public viewer/admin workflow with a unified plot window, stronger topic hierarchy tools, retention/validation controls, and persistent app settings. **public, slug-based plot URLs**, **multi-topic plotting**, and **embeddable plot views**, enabling MQTTPlot to act as a read-only visualization endpoint without exposing internal configuration.
 
 ---
 

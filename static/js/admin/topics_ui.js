@@ -71,7 +71,8 @@ export async function loadTopics({ onSelectTopic } = {}) {
   const rootNames = Object.keys(roots).sort((a, b) => a.localeCompare(b));
   for (const root of rootNames) {
     const items = roots[root].sort((a, b) => a.topic.localeCompare(b.topic));
-    const rootTopicDisplay = `/${root}`;
+        const hasLeadingSlash = items.some(x => String(x.topic || '').startsWith('/'));
+    const rootTopicDisplay = `${hasLeadingSlash ? '/' : ''}${root}`;
 
     // Root row
     const rootRow = document.createElement('tr');
@@ -101,7 +102,7 @@ export async function loadTopics({ onSelectTopic } = {}) {
     const delRoot = document.createElement('button');
     delRoot.textContent = 'Delete';
     delRoot.addEventListener('click', async () => {
-      if (!confirm(`Delete ALL data for root "/${root}" and all subtopics?`)) return;
+      if (!confirm(`Delete ALL data for root "${rootTopicDisplay}" and all subtopics?`)) return;
       try {
         await deleteRootTopic(root);
         // Do NOT rebuild the table (would wipe in-progress edits). Instead, reset counts in-place.
@@ -347,8 +348,8 @@ function topicSettingsControls(topicRow, validationMap) {
   units.className = 'select-compact';
   units.innerHTML = `
     <option value="">Units (—)</option>
-    <option value="distance_m">Distance (m)</option>
-    <option value="distance_ftin">Distance (ft/in)</option>
+    <option value="distance_m">meters</option>
+    <option value="distance_ftin">feet</option>
     <option value="temp_f">Temperature (°F)</option>
     <option value="temp_c">Temperature (°C)</option>
     <option value="pressure_kpa">Pressure (kPa)</option>

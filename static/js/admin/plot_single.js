@@ -22,8 +22,8 @@ const WINDOW_OPTIONS_MS = [
 
 function formatUnitsLabel(units) {
   switch (units) {
-    case 'distance_m': return 'Distance (m)';
-    case 'distance_ftin': return 'Distance (ft/in)';
+    case 'distance_m': return 'meters';
+    case 'distance_ftin': return 'feet';
     case 'temp_f': return 'Temperature (°F)';
     case 'temp_c': return 'Temperature (°C)';
     case 'pressure_kpa': return 'Pressure (kPa)';
@@ -292,7 +292,7 @@ export class SingleTopicPlot {
       if (yRange) yaxis.range = yRange;
     }
 
-    // Distance (ft/in) display: keep numeric axis in meters but render tick labels as ft/in when dtick is set.
+    // feet display: keep numeric axis in meters but render tick labels as ft/in when dtick is set.
     if (units === 'distance_ftin' && dtick) {
       const ys = js.map(r => r.value).filter(v => typeof v === 'number' && !Number.isNaN(v));
       if (ys.length) {

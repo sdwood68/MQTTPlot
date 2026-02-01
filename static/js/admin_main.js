@@ -63,10 +63,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
     try {
       const settings = await getAdminSettings();
-      if (tzEl && settings.timezone) tzEl.value = settings.timezone;
-      if (hostEl && settings.broker_host) hostEl.value = settings.broker_host;
-      if (portEl && settings.broker_port) portEl.value = settings.broker_port;
-      if (topicsEl && settings.broker_topics) topicsEl.value = settings.broker_topics;
+      const tz = settings?.timezone;
+      const broker = settings?.broker || {};
+      if (tzEl && tz) tzEl.value = tz;
+      if (hostEl && broker.host) hostEl.value = broker.host;
+      if (portEl && broker.port != null) portEl.value = broker.port;
+      if (topicsEl && broker.topics) topicsEl.value = broker.topics;
+
+      const curTz = document.getElementById('current_tz');
+      if (curTz && tz) curTz.textContent = tz;
+      const curBroker = document.getElementById('current_broker');
+      if (curBroker && broker.host && broker.port != null) curBroker.textContent = `${broker.host}:${broker.port}`;
+      const curTopics = document.getElementById('current_broker_topics');
+      if (curTopics && broker.topics) curTopics.textContent = broker.topics;
     } catch {
       // ignore; admin settings optional
     }
@@ -76,6 +85,8 @@ document.addEventListener('DOMContentLoaded', () => {
       try {
         await saveAdminSettings({ timezone });
         if (tzStatus) tzStatus.textContent = 'Saved';
+        const curTz = document.getElementById('current_tz');
+        if (curTz) curTz.textContent = timezone || 'UTC';
       } catch {
         if (tzStatus) tzStatus.textContent = 'Save failed';
         alert('Failed to save time zone (are you logged in as admin?)');
@@ -89,6 +100,10 @@ document.addEventListener('DOMContentLoaded', () => {
       try {
         await saveAdminSettings({ broker_host, broker_port, broker_topics });
         if (brokerStatus) brokerStatus.textContent = 'Saved';
+        const curBroker = document.getElementById('current_broker');
+        if (curBroker) curBroker.textContent = `${broker_host}:${broker_port}`;
+        const curTopics = document.getElementById('current_broker_topics');
+        if (curTopics) curTopics.textContent = broker_topics;
       } catch {
         if (brokerStatus) brokerStatus.textContent = 'Save failed';
         alert('Failed to save broker settings (are you logged in as admin?)');

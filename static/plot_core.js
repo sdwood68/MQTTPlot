@@ -16,8 +16,8 @@
 
   function unitsLabel(units){
     switch (units) {
-      case 'distance_m': return 'Distance (m)';
-      case 'distance_ftin': return 'Distance (ft/in)';
+      case 'distance_m': return 'meters';
+      case 'distance_ftin': return 'feet';
       case 'temp_f': return 'Temperature (°F)';
       case 'temp_c': return 'Temperature (°C)';
       case 'pressure_kpa': return 'Pressure (kPa)';

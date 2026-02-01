@@ -2,160 +2,157 @@
 <html>
 
 <head>
-    <meta charset="utf-8" />
-    <meta name="csrf-token" content="{{ csrf_token or '' }}">
-    <title>MQTTPlot</title>
+  <meta charset="utf-8" />
+  <meta name="csrf-token" content="{{ csrf_token or '' }}">
+  <title>MQTTPlot</title>
 
-    <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
-    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 
-    <link rel="stylesheet" href="/static/mqttplot.css">
-    <script type="module" src="/static/js/common_main.js"></script>
-    {% if admin %}
-    <script type="module" src="/static/js/admin_main.js"></script>
-    {% endif %}
+  <link rel="stylesheet" href="/static/mqttplot.css">
+  <script type="module" src="/static/js/common_main.js"></script>
+  {% if admin %}
+  <script type="module" src="/static/js/admin_main.js"></script>
+  {% endif %}
 </head>
 
 <body class="{{ 'admin' if admin else '' }}" data-admin="{{ 'true' if admin else 'false' }}">
 
   <div id="top-bar">
-      <div id="mqtt-status" class="mqtt-status mqtt-status--unknown">
-        MQTT: (checking…)
-      </div>
-
-      <div id="admin-bar">
-        {% if admin %}
-        <span>Admin: {{ admin_user }}</span>
-        <a href="/admin/logout">Logout</a>
-        {% else %}
-        <a href="{{ url_for('admin_login_page') }}">Admin Login</a>
-        {% endif %}
-      </div>
+    <div id="mqtt-status" class="mqtt-status mqtt-status--unknown">
+      MQTT: (checking…)
     </div>
 
-    <h2>MQTTPlot</h2>
-    {% if admin %}
-      <h3>Admin Settings</h3>
-      <div class="admin-settings">
-        <div class="settings-row">
-          <label>Time zone:
-            <input id="admin_tz" list="tzlist" placeholder="e.g. America/New_York">
-          </label>
-          <button id="btnSaveTz">Save</button>
-          <span id="tz_status" class="small-status"></span>
-        </div>
-        <datalist id="tzlist">
-          <option value="America/New_York"></option>
-          <option value="America/Chicago"></option>
-          <option value="America/Denver"></option>
-          <option value="America/Los_Angeles"></option>
-          <option value="UTC"></option>
-        </datalist>
+    <div id="app-title">MQTTPlot</div>
 
-        <div class="settings-row" style="margin-top:8px;">
-          <label>Broker host:
-            <input id="broker_host" placeholder="e.g. 192.168.12.50">
-          </label>
-          <label>Port:
-            <input id="broker_port" type="number" min="1" max="65535" style="width:110px;">
-          </label>
-          <label>Topics:
-            <input id="broker_topics" placeholder="e.g. #">
-          </label>
-          <button id="btnSaveBroker">Save</button>
-          <span id="broker_status" class="small-status"></span>
-        </div>
-      </div>
-    {% endif %}
-
-    {% if admin %}
-    <div class="admin-box">
-        <b>Admin Mode Enabled</b>
-    </div>
-    {% endif %}
-
-    {% if admin %}
-      <h3>Topics</h3>
-      <div id="topics"></div>
-
-
-    {% else %}
-      <h3>Published Plots</h3>
-      {% if public_plots and public_plots|length > 0 %}
-        <ul>
-          {% for p in public_plots %}
-            <li><a href="/p/{{ p.slug }}">{{ p.title or p.slug }}</a></li>
-          {% endfor %}
-        </ul>
+    <div id="admin-bar">
+      {% if admin %}
+      <span>Admin: {{ admin_user }}</span>
+      <a href="/admin/logout">Logout</a>
       {% else %}
-        <p>No published plots are currently available.</p>
+      <a href="{{ url_for('admin_login_page') }}">Admin Login</a>
       {% endif %}
-    {% endif %}
-
-    {% if admin %}
-      <div class="admin-box">
-          <h3>OTA Control</h3>
-          <input id="otaBase" placeholder="Base topic (e.g. watergauge)">
-          <button id="btnOtaEnter">Enter OTA</button>
-          <button id="btnOtaExit">Exit OTA</button>
-      </div>
-    {% endif %}
-
-    {% if admin %}
-    <hr>
-    <div class="admin-box">
-        <h3>Public Plot URLs</h3>
-        <p>
-          Create a published plot and share the URL <code>/p/&lt;slug&gt;</code>.
-          Only published plots are visible to non-admin users.
-        </p>
-        <div>
-          <label>Slug:
-            <input id="pp_slug" placeholder="e.g. watergauge-temps">
-          </label>
-          <label>Title:
-            <input id="pp_title" placeholder="Display title (optional)">
-          </label>
-          <label>Description:
-            <input id="pp_description" placeholder="Optional description" style="width: 360px;">
-          </label>
-        </div>
-        <div style="margin-top:10px;">
-          <b>Topics</b>
-          <div style="margin-top:6px;">
-            <table id="pp_topics_table" style="border-collapse: collapse; width: 100%; max-width: 980px;">
-              <thead>
-                <tr>
-                  <th style="text-align:left; padding: 4px;">Topic</th>
-                  <th style="text-align:left; padding: 4px;">Label</th>
-                  <th style="text-align:left; padding: 4px;">Y Axis</th>
-                  <th style="text-align:left; padding: 4px;">Mode</th>
-                  <th style="text-align:left; padding: 4px;">Actions</th>
-                </tr>
-              </thead>
-              <tbody id="pp_topics_tbody"></tbody>
-            </table>
-          </div>
-          <div style="margin-top:6px;">
-            <button id="btnAddPublicPlotTopic">Add topic</button>
-          </div>
-        </div>
-        <div style="margin-top:6px;">
-          <label>Default range (seconds):
-            <input id="pp_range_sec" type="number" min="60" value="3600">
-          </label>
-          <label style="margin-left:10px;">
-            <input id="pp_published" type="checkbox" checked> Published
-          </label>
-          <button id="btnPreviewPublicPlot" style="margin-left:10px;">Preview</button>
-          <button id="btnSavePublicPlot" style="margin-left:10px;">Save</button>
-          <button id="btnRefreshPublicPlots">Refresh list</button>
-          <button id="btnClearPublicPlot" style="margin-left:10px;">Clear</button>
-        </div>
-        <pre id="public_plots_status"></pre>
-        <div id="public_plots_list"></div>
     </div>
-    {% endif %}
+  </div>
+
+  {% if admin %}
+  <h3>Broker Settings</h3>
+  <div class="admin-settings">
+    <div class="settings-row">
+      <span class="settings-current"><b>Current time zone:</b> <span id="current_tz">{{ current_tz }}</span></span>
+      <label style="margin-left:12px;">Set time zone:
+        <select id="admin_tz" class="select-compact">
+          {% for tz in tz_list %}
+          <option value="{{ tz }}" {% if tz==current_tz %}selected{% endif %}>{{ tz }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <button id="btnSaveTz">Save</button>
+      <span id="tz_status" class="small-status"></span>
+    </div>
+
+    <div class="settings-row" style="margin-top:8px;">
+      <span class="settings-current"><b>Current broker:</b> <span id="current_broker">{{ current_broker_host }}:{{
+          current_broker_port }}</span></span>
+      <span class="settings-current" style="margin-left:12px;"><b>Topics:</b> <span id="current_broker_topics">{{
+          current_broker_topics }}</span></span>
+
+      <label style="margin-left:12px;">Host:
+        <input id="broker_host" placeholder="e.g. 192.168.12.50 or broker.example.com">
+      </label>
+      <label>Port:
+        <input id="broker_port" type="number" min="1" max="65535" style="width:110px;">
+      </label>
+      <label>Topics:
+        <input id="broker_topics" placeholder="e.g. #">
+      </label>
+      <button id="btnSaveBroker">Save</button>
+      <span id="broker_status" class="small-status"></span>
+    </div>
+  </div>
+  {% endif %}
+  {% if admin %}
+  <h3>Topics</h3>
+  <div id="topics"></div>
+
+
+  {% else %}
+  <h3>Published Plots</h3>
+  {% if public_plots and public_plots|length > 0 %}
+  <ul>
+    {% for p in public_plots %}
+    <li><a href="/p/{{ p.slug }}">{{ p.title or p.slug }}</a></li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p>No published plots are currently available.</p>
+  {% endif %}
+  {% endif %}
+
+  {% if admin %}
+  <div class="admin-box">
+    <h3>OTA Control</h3>
+    <input id="otaBase" placeholder="Base topic (e.g. watergauge)">
+    <button id="btnOtaEnter">Enter OTA</button>
+    <button id="btnOtaExit">Exit OTA</button>
+  </div>
+  {% endif %}
+
+  {% if admin %}
+  <hr>
+  <div class="admin-box">
+    <h3>Public Plot URLs</h3>
+    <p>
+      Create a published plot and share the URL <code>/p/&lt;slug&gt;</code>.
+      Only published plots are visible to non-admin users.
+    </p>
+    <div>
+      <label>Slug:
+        <input id="pp_slug" placeholder="e.g. watergauge-temps">
+      </label>
+      <label>Title:
+        <input id="pp_title" placeholder="Display title (optional)">
+      </label>
+      <label>Description:
+        <input id="pp_description" placeholder="Optional description" style="width: 360px;">
+      </label>
+    </div>
+    <div style="margin-top:10px;">
+      <b>Topics</b>
+      <div style="margin-top:6px;">
+        <table id="pp_topics_table" style="border-collapse: collapse; width: 100%; max-width: 980px;">
+          <thead>
+            <tr>
+              <th style="text-align:left; padding: 4px;">Topic</th>
+              <th style="text-align:left; padding: 4px;">Label</th>
+              <th style="text-align:left; padding: 4px;">Y Axis</th>
+              <th style="text-align:left; padding: 4px;">Mode</th>
+              <th style="text-align:left; padding: 4px;">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="pp_topics_tbody"></tbody>
+        </table>
+      </div>
+      <div style="margin-top:6px;">
+        <button id="btnAddPublicPlotTopic">Add topic</button>
+      </div>
+    </div>
+    <div style="margin-top:6px;">
+      <label>Default range (seconds):
+        <input id="pp_range_sec" type="number" min="60" value="3600">
+      </label>
+      <label style="margin-left:10px;">
+        <input id="pp_published" type="checkbox" checked> Published
+      </label>
+      <button id="btnPreviewPublicPlot" style="margin-left:10px;">Preview</button>
+      <button id="btnSavePublicPlot" style="margin-left:10px;">Save</button>
+      <button id="btnRefreshPublicPlots">Refresh list</button>
+      <button id="btnClearPublicPlot" style="margin-left:10px;">Clear</button>
+    </div>
+    <pre id="public_plots_status"></pre>
+    <div id="public_plots_list"></div>
+  </div>
+  {% endif %}
 </body>
 
 </html>
