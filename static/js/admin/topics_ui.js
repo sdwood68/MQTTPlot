@@ -71,8 +71,7 @@ export async function loadTopics({ onSelectTopic } = {}) {
   const rootNames = Object.keys(roots).sort((a, b) => a.localeCompare(b));
   for (const root of rootNames) {
     const items = roots[root].sort((a, b) => a.topic.localeCompare(b.topic));
-        const hasLeadingSlash = items.some(x => String(x.topic || '').startsWith('/'));
-    const rootTopicDisplay = `${hasLeadingSlash ? '/' : ''}${root}`;
+            const rootTopicDisplay = `${root}`;
 
     // Root row
     const rootRow = document.createElement('tr');
@@ -370,13 +369,11 @@ function topicSettingsControls(topicRow, validationMap) {
 
   const saveBtn = document.createElement('button');
   saveBtn.textContent = 'Save';
-  saveBtn.style.minWidth = '74px';
-  saveBtn.style.height = '100%';
+  saveBtn.className = 'topic-save-btn';
 
   const status = document.createElement('span');
   status.className = 'validation-status';
-  status.style.display = 'block';
-  status.style.marginTop = '6px';
+  status.classList.add('topic-save-status');
 
   function clampLen(el) {
     el.addEventListener('input', () => {
@@ -401,10 +398,7 @@ function topicSettingsControls(topicRow, validationMap) {
   left.appendChild(row2);
 
   const right = document.createElement('div');
-  right.style.display = 'flex';
-  right.style.flexDirection = 'column';
-  right.style.justifyContent = 'center';
-  right.style.alignItems = 'flex-start';
+  right.className = 'topic-save-col';
   right.appendChild(saveBtn);
   right.appendChild(status);
 

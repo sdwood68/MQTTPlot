@@ -40,7 +40,7 @@
   <div class="admin-settings">
     <div class="settings-row">
       <span class="settings-current"><b>Current time zone:</b> <span id="current_tz">{{ current_tz }}</span></span>
-      <label style="margin-left:12px;">Set time zone:
+      <label class="ml-12">Set time zone:
         <select id="admin_tz" class="select-compact">
           {% for tz in tz_list %}
           <option value="{{ tz }}" {% if tz==current_tz %}selected{% endif %}>{{ tz }}</option>
@@ -51,17 +51,17 @@
       <span id="tz_status" class="small-status"></span>
     </div>
 
-    <div class="settings-row" style="margin-top:8px;">
+    <div class="settings-row mt-8">
       <span class="settings-current"><b>Current broker:</b> <span id="current_broker">{{ current_broker_host }}:{{
           current_broker_port }}</span></span>
-      <span class="settings-current" style="margin-left:12px;"><b>Topics:</b> <span id="current_broker_topics">{{
+      <span class="settings-current ml-12"><b>Topics:</b> <span id="current_broker_topics">{{
           current_broker_topics }}</span></span>
 
-      <label style="margin-left:12px;">Host:
+      <label class="ml-12">Host:
         <input id="broker_host" placeholder="e.g. 192.168.12.50 or broker.example.com">
       </label>
       <label>Port:
-        <input id="broker_port" type="number" min="1" max="65535" style="width:110px;">
+        <input id="broker_port" type="number" min="1" max="65535" class="w-110">
       </label>
       <label>Topics:
         <input id="broker_topics" placeholder="e.g. #">
@@ -114,12 +114,12 @@
         <input id="pp_title" placeholder="Display title (optional)">
       </label>
       <label>Description:
-        <input id="pp_description" placeholder="Optional description" style="width: 360px;">
+        <input id="pp_description" placeholder="Optional description" class="w-360">
       </label>
     </div>
-    <div style="margin-top:10px;">
+    <div class="mt-10">
       <b>Topics</b>
-      <div style="margin-top:6px;">
+      <div class="mt-6">
         <table id="pp_topics_table" style="border-collapse: collapse; width: 100%; max-width: 980px;">
           <thead>
             <tr>
@@ -133,11 +133,11 @@
           <tbody id="pp_topics_tbody"></tbody>
         </table>
       </div>
-      <div style="margin-top:6px;">
+      <div class="mt-6">
         <button id="btnAddPublicPlotTopic">Add topic</button>
       </div>
     </div>
-    <div style="margin-top:6px;">
+    <div class="mt-6">
       <label>Default range (seconds):
         <input id="pp_range_sec" type="number" min="60" value="3600">
       </label>

@@ -14,6 +14,16 @@ from .data_store import DataStore
 logger = logging.getLogger(__name__)
 
 
+def is_ignored_topic(topic: str) -> bool:
+    """Return True if this topic should never be stored or tracked.
+
+    v0.8.1: ignore 'ota' control channels used by devices (e.g. watergauge/ota).
+    """
+    parts = [p for p in str(topic or '').split('/') if p]
+    return 'ota' in parts
+
+
+
 class StoreDecision(str, Enum):
     STORE = "store"          # store timeseries and update metadata
     DROP_STORE = "drop_store"  # update metadata only (topic disabled/rate too high)
@@ -38,6 +48,9 @@ class PolicyEngine:
         # Future: in-memory rate limiter state (token buckets / sliding windows)
 
     def decide(self, topic: str, ts_epoch: float) -> tuple[StoreDecision, str | None]:
+        # Hard ignore list
+        if is_ignored_topic(topic):
+            return (StoreDecision.DROP_ALL, "ignored_topic")
         # UI-controlled storage enable/disable (future-proof)
         pol = self.meta.get_topic_policy(topic)  # cheap cached lookup
         if pol is not None:
