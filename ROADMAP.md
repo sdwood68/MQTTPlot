@@ -72,8 +72,19 @@ and URLs
   - Change units 'Distance (m)' to just 'meters'
 - Never Store the subtopic 'ota' That is a controll channel for the device.
 - Consolidate css inline styles into mqttplot.css
+- Move the current Topic's values from row 2 to row 3
+- Move teh topics Topics' entry to two 4 and extend its length by two.
 
-### 0.8.2 - Ignore Topics, Flooding and bad data
+### 0.8.2 - Small plot preview
+
+- create a plot preview that is 50% smaller than the normal plot.
+  - The slug will link to the plot preview.
+  - The plot preview shows the lastest two hours.
+  - It update as new data comes in.
+  - It does not have plot controlls
+  - clicking on it opens a pop-up window with the full plot with controls.  
+
+### 0.8.3 - Ignore Topics, Flooding and bad data
 
 - On the Admin Page
   - Add a check box per subtopic to ignore incoming data. When checked the app
@@ -87,7 +98,7 @@ miniute it will trigger protection.
 - drop any data points that fall outside of the min / max limits set for the
 topic.
 
-### 0.8.3 - MQTT Jason Data Payloads
+### 0.8.4 - MQTT Jason Data Payloads
 
 - Add support for reveciving MQTT data with Jason load that includes the value
 and units for the data received.

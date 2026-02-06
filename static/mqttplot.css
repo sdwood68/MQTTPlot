@@ -370,3 +370,19 @@ button {
 .push-right {
     margin-left: auto;
 }
+
+/* ---------- extracted inline styles (templates) ---------- */
+
+.idx-756adb2c { border-collapse: collapse; width: 100%; max-width: 980px; }
+.idx-432e1ff2 { text-align: left; padding: 4px; }
+.idx-22f61d20 { margin-left: 10px; }
+.pltbase-24a4ec50 { padding: 8px 10px; }
+.pltbase-ff227d06 { margin: 0; }
+.pltbase-a28d1ba3 { opacity: 0.75; }
+.pltbase-f2892a2e { display: none; }
+.pltbase-e979f203 { margin-top: 6px; opacity: 0.85; }
+.pltbase-73f2857b { display: none; margin-top: 8px; }
+
+
+/* Utility: force a new row in flex-wrap containers */
+.flex-break { flex-basis: 100%; height: 0; }

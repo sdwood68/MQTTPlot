@@ -109,7 +109,7 @@ top bar).
 
 ### Fixed
 
-- Back button on public plots: when the dataset is smaller than the selected 
+- Back button on public plots: when the dataset is smaller than the selected
 window (or already at the earliest sample), Back does nothing.
 
 ### Removed
