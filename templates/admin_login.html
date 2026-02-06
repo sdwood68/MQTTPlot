@@ -1,7 +1,9 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token or '' }}">
 <title>MQTTPlot Admin Login</title>
 <style>
 body { font-family: sans-serif; margin: 40px; }
@@ -13,7 +15,7 @@ input, button { margin: 6px; padding: 6px; }
 <h3>MQTTPlot Admin Login</h3>
 
 {% if error %}
-<p style="color:red">{{ error }}</p>
+<p class="text-red">{{ error }}</p>
 {% endif %}
 
 <form method="post">

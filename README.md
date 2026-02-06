@@ -1,46 +1,59 @@
 # MQTTPlot
 
-**MQTTPlot** is a lightweight MQTT data ingestion and visualization service designed for long-running IoT and telemetry systems. It subscribes to MQTT topics, persists time-series data to SQLite, and serves interactive Plotly-based graphs via a web interface.
+**MQTTPlot** is a lightweight MQTT data ingestion and visualization service
+designed for long-running IoT and telemetry systems. It subscribes to MQTT
+topics, persists time-series data to SQLite, and serves interactive Plotly-based
+graphs via a web interface.
+
+Version **0.8.1** expands on the public viewer/admin workflow with a unified
+plot window, stronger topic hierarchy tools, retention/validation controls, and
+persistent app settings. **public, slug-based plot URLs**,
+**multi-topic plotting**, and **embeddable plot views**, enabling MQTTPlot to
+act as a read-only visualization endpoint without exposing internal configuration.
 
 ---
 
 ## Key Features
 
 ### Core
+
 - MQTT subscription with wildcard topic support
 - Persistent SQLite storage per topic
 - Automatic database creation and schema management
 - Time-windowed queries optimized for plotting
 
 ### Plotting & UI
+
 - Interactive Plotly graphs
 - Multi-topic plots (multiple series per chart)
 - Dual Y-axis support with aligned major units
 - In-plot navigation and controls
 - Preview thumbnails for plots
 
-### Public Access
+### Public Access (New in 0.7.0)
+
 - Slug-based public plot URLs
 - Read-only embedded plot views
 - No exposure of MQTT topics, database paths, or credentials
 - Suitable for dashboards, iframes, and wall displays
 
 ### Administration
+
 - Admin-only configuration views
 - Topic-to-plot mapping control
 - Plot metadata management (titles, units, axes)
 - Separation of admin and public concerns
 
-
 ## Architecture Overview
 
 MQTTPlot consists of four layers:
+
 1) **Ingestion** (MQTT client subscribes to topics)
 2) **Persistence** (SQLite stores time-series samples)
 3) **Plot definitions** (metadata describing what/how to graph)
 4) **Presentation** (admin UI + public, slug-based routes)
 
-```
+```text
                     ┌──────────────────────────┐
                     │        MQTT Broker       │
                     │   (sensors, devices)     │
@@ -67,7 +80,7 @@ MQTTPlot consists of four layers:
                 │                                  │
                 ▼                                  ▼
 ┌──────────────────────────────┐     ┌──────────────────────────────┐
-│       4A) ADMIN UI           │     │      4B) PUBLIC PLOTS        │
+│       4A) ADMIN UI           │     │      5B) PUBLIC PLOTS        │
 │   (authenticated / private)  │     │     (read-only / shared)     │
 │                              │     │                              │
 │ • Configure plots            │     │ • Slug-based URLs            │
@@ -78,13 +91,16 @@ MQTTPlot consists of four layers:
 │                              │     │                              │
 └──────────────────────────────┘     └──────────────────────────────┘
 ```
+
 ### Data Flow
+
 1. MQTT messages arrive on subscribed topics.
 2. Messages are parsed and stored to the topic’s SQLite database.
 3. Plot routes query the database for a time window.
 4. Plotly renders interactive charts in the browser.
 
-### Separation of Concerns
+### Separation of Concerns (0.7.0)
+
 - **Admin** routes expose configuration tools and internal details (protected).
 - **Public** routes expose only plots via **slugs** (no internal topic names).
 
@@ -95,12 +111,14 @@ MQTTPlot consists of four layers:
 A **slug** is a short, URL-safe identifier that represents a plot definition.
 
 Examples:
-```
+
+```text
 /plot/watergauge/height
 /plot/outdoor-temperature
 ```
 
 Key properties:
+
 - Slugs map internally to one or more MQTT topics (one plot, many series).
 - Public users never see topic names, database paths, or credentials.
 - Slugs are stable and suitable for bookmarks or embedding.
@@ -110,11 +128,13 @@ Key properties:
 ## Public vs Admin Views
 
 ### Public (Read-Only)
+
 - Intended for sharing, embedding, and unattended displays
 - Shows the plot title, axes labels, series legend, and navigation controls
 - Does not expose configuration, topic names, or backend details
 
 ### Admin
+
 - Configure plots (title, units, axis assignment, series selection)
 - Control what becomes public (by enabling a slug)
 - Manage topic/series definitions and presentation settings
@@ -123,9 +143,10 @@ Key properties:
 
 ## Installation
 
-MQTTPlot 0.7.0 includes dedicated **service install and uninstall scripts** intended for
-Linux systems using `systemd`. These scripts provide a repeatable, production-oriented
-installation with a dedicated service user and persistent data storage.
+MQTTPlot 0.7.0 includes dedicated **service install and uninstall scripts**
+intended for Linux systems using `systemd`. These scripts provide a repeatable,
+production-oriented installation with a dedicated service user and persistent
+data storage.
 
 ---
 
@@ -150,16 +171,18 @@ chmod +x install.sh uninstall.sh
 sudo ./install.sh
 ```
 
-#### What the installer does:
+#### What the installer does
 
 - Installs MQTTPlot under: `/opt/mqttplot`
 - Creates a dedicated system user: `mqttplot`
 - Creates persistent directories:
-```
+
+```text
 /var/lib/mqttplot     # SQLite databases
 /var/log/mqttplot     # Application logs
 /etc/mqttplot         # Configuration
 ```
+
 - Creates a Python virtual environment
 - Installs required Python dependencies
 - Installs and enables a systemd service: `mqttplot.service`
@@ -167,23 +190,29 @@ sudo ./install.sh
 The service runs as the **mqttplot** user (not root).
 
 ### Optional Install Flags
-```
+
+```bash
 sudo ./install_service.sh --reset-db
 ```
+
 - `--reset-db`
 removes any existing databases under `/var/lib/mqttplot` before starting.
 
-Use with caution.
+***Use with caution***
+
 ---
+
 ### Configuration
 
 After Installation, edit the environment file created by the installer.
-```
+
+```bash
 sudo nano /etc/mqttplot/mqttplot.env
 ```
 
 Typical contents:
-```
+
+```text
 MQTTPLOT_MQTT_HOST=localhost
 MQTTPLOT_MQTT_PORT=1883
 MQTTPLOT_MQTT_USERNAME=
@@ -195,19 +224,22 @@ MQTTPLOT_LOG_LEVEL=INFO
 # Admin protection (project-specific)
 MQTTPLOT_ADMIN_SECRET=changeme
 ```
+
 ---
 
 ### Service Control
 
 #### Start / Stop (systemd)
-```
+
+```bash
 sudo systemctl start mqttplot
 sudo systemctl stop mqttplot
 sudo systemctl status mqttplot
 ```
 
 #### Enable at Boot
-```
+
+```bash
 sudo systemctl enable mqttplot
 ```
 
@@ -216,29 +248,35 @@ sudo systemctl enable mqttplot
 ### Logs
 
 Log are available via `journalctl`:
-```
+
+```bash
 sudo journalctl -u mqttplot -f
 ```
 
-
 ---
+
 ### Uninstall
 
 To remove MQTTPlot installed via the installer:
-```
+
+```bash
 sudo ./uninstall_service.sh
 ```
+
 #### Uninstall Options
-```
+
+```bash
 sudo ./uninstall_service.sh --purge-data
 sudo ./uninstall_service.sh --remove-user
 ```
+
 - `--purge-data`
 Deletes `/var/lib/mqttplot` (all stored data)
 - `--remove-user`
 Removes the `mqttplot` system user
 
-#### By default:
+#### By default
+
 - Data is preserved
 - The service user is retained.
 
@@ -246,15 +284,16 @@ Removes the `mqttplot` system user
 
 ### Manual / Development Mode (Optional)
 
-For development or testing without system installation, MQTTPlot can still be run directly via Python. See app.py and inline comments for details.
+For development or testing without system installation, MQTTPlot can still be
+run directly via Python. See app.py and inline comments for details.
 
 Production deployments should use the service installer.
 
-
 ## Embedded Plots
+
 Public plots can be embedded using an iframe:
 
-```
+```html
 <iframe
   src="https://yourhost/plot/water-tank-level"
   width="100%"
@@ -264,31 +303,63 @@ Public plots can be embedded using an iframe:
 ```
 
 Recommendations:
+
 - Use a fixed height for stable dashboard layouts.
 - Prefer a reverse proxy (nginx/Caddy) for TLS termination in production.
 
 ## Operational Notes
+
 ### Storage Layout
 
 MQTTPlot persists data under the configured MQTTPLOT_DB_ROOT directory. Typically:
+
 - One SQLite database per topic (or per logical channel), depending on configuration.
 - Schema is created automatically if missing.
 
 #### Performance
+
 - Plot routes query by time window.
 - Multi-topic plots issue one query per series (unless optimized in your build).
 - For high-frequency sensors, plan for retention/downsampling in a future release.
 
 ### Security Model
+
 - MQTT credentials are server-side only; never returned to clients.
 - Public endpoints are strictly read-only.
-- Admin endpoints are protected and should not be exposed without authentication controls.
+- Admin endpoints are protected and should not be exposed without authentication
+controls.
 - Slugs are the only public identifiers; internal topic names remain private.
 
-##  Versioning
+## Versioning
 
 MQTTPlot follows semantic versioning:
 
 - 0.6.x – Single-topic plots, admin-centric UI
 - 0.7.0 – Public slugs, multi-topic plots, embedding
 - 0.8.x (planned) – Auth, dashboards, retention policies
+
+## Docker
+
+Build and run MQTTPlot using Docker:
+
+```bash
+docker build -t mqttplot:0.8.0.1 .
+
+# Example run: bind web port and persist data/db
+mkdir -p ./data
+
+docker run --rm -it \
+  -p 5000:5000 \
+  -e MQTT_BROKER=192.168.12.50 \
+  -e MQTT_PORT=1883 \
+  -e MQTT_TOPICS="#" \
+  -e DB_PATH=/data/mqtt_data.db \
+  -e DATA_DB_DIR=/data/topics \
+  -v "$(pwd)/data:/data" \
+  mqttplot:0.8.0.1
+```
+
+Notes:
+
+- `DB_PATH` is the metadata/admin database.
+- `DATA_DB_DIR` holds the per-top-level-topic SQLite DB files.

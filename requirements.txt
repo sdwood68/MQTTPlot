@@ -1,11 +1,10 @@
 flask>=2.0
 flask-socketio>=5.0
 eventlet>=0.33
-paho-mqtt>=1.6
 plotly>=5.15
 kaleido>=0.2  # for PNG export
 requests>=2.32
-paho-mqtt>=2.0 
+paho-mqtt>=2.0
 waitress
 Werkzeug>=3.0
 python-dotenv>=1.2

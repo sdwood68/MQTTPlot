@@ -147,6 +147,9 @@ echo "====================="
 
 # --- Create secret.env ---
 echo "Creating protected secret.env file..."
+# Generate a persistent SECRET_KEY for Flask sessions (required for stable admin auth)
+SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+
 cat > "$SECRET_FILE" <<EOF
 MQTT_BROKER=$MQTT_BROKER
 MQTT_PORT=$MQTT_PORT
@@ -155,6 +158,8 @@ MQTT_PASSWORD=$MQTT_PASSWORD
 MQTT_TOPICS=$MQTT_TOPICS
 FLASK_PORT=$FLASK_PORT
 DB_PATH=$DB_PATH
+DATA_DB_DIR=$INSTALL_DIR/data
+SECRET_KEY=$SECRET_KEY
 EOF
 
 chown root:mqttplot "$SECRET_FILE"

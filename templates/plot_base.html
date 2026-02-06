@@ -1,7 +1,9 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token or '' }}">
   <title>{% block page_title %}MQTTPlot{% endblock %}</title>
 
   <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
@@ -18,13 +20,13 @@
 
 <body class="{% block body_class %}{% endblock %}" {% block body_data %}{% endblock %}>
   <div id="top-bar">
-    <div style="padding: 8px 10px;">
-      <h2 style="margin:0;" id="plotTitle">{% block header_title %}Plot{% endblock %}</h2>
-      <span style="opacity:0.75;" id="plotSubtitle">{% block header_subtitle %}{% endblock %}</span>
+    <div class="pltbase-24a4ec50">
+      <h2 class="pltbase-ff227d06" id="plotTitle">{% block header_title %}Plot{% endblock %}</h2>
+      <span class="pltbase-a28d1ba3" id="plotSubtitle">{% block header_subtitle %}{% endblock %}</span>
       {% block header_description %}{% endblock %}
     </div>
 
-    <div style="padding: 8px 10px;">
+    <div class="pltbase-24a4ec50">
       {% block header_right %}{% endblock %}
     </div>
   </div>
@@ -51,11 +53,11 @@
       <button id="btnFwd" title="Forward" type="button">
           <span class="mdi mdi-skip-forward"></span>
       </button>
-      <button id="liveIndicator" class="live-indicator" style="display:none;" disabled>Live</button>
+      <button id="liveIndicator" class="live-indicator pltbase-f2892a2e" disabled>Live</button>
     </div>
 
-    <div id="plotStatus" style="margin-top: 6px; opacity: 0.85;"></div>
-    <div id="plot_error" class="admin-box" style="display:none; margin-top: 8px;"></div>
+    <div id="plotStatus" class="pltbase-e979f203"></div>
+    <div id="plot_error" class="admin-box pltbase-73f2857b"></div>
   </div>
 
   <div class="plot-area">
