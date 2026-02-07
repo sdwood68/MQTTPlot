@@ -1,0 +1,28 @@
+[Unit]
+Description=MQTTPlot Data Collector and Web Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mqttplot
+Group=mqttplot
+WorkingDirectory=/opt/mqttplot
+
+# Force production-safe behavior under systemd
+Environment=FLASK_ENV=production
+Environment=FLASK_DEBUG=0
+Environment=PYTHONUNBUFFERED=1
+Environment=MQTTPLOT_LOG_LEVEL=INFO
+
+EnvironmentFile=/opt/mqttplot/secret.env
+ExecStart=/opt/mqttplot/venv/bin/python3 -u /opt/mqttplot/app.py
+
+Restart=on-failure
+RestartSec=5
+
+StandardOutput=append:/var/log/mqttplot/mqttplot.log
+StandardError=append:/var/log/mqttplot/mqttplot.log
+
+[Install]
+WantedBy=multi-user.target

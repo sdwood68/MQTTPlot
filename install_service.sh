@@ -50,6 +50,7 @@ fi
 echo "Copying project files to $INSTALL_DIR ..."
 # If an old DB exists and we are not resetting, temporarily move it out of the way
 TMP_DB=""
+TMP_SECRET=""
 if [[ -f "$DB_PATH" && $RESET_DB -eq 0 ]]; then
   TMP_DB="/tmp/${DB_BASENAME}.$$"
   mv "$DB_PATH" "$TMP_DB"
@@ -58,9 +59,19 @@ fi
 # Copy everything from current directory into INSTALL_DIR
 # (This assumes you run the installer from your project directory)
 # cp -a ./* "$INSTALL_DIR/"
+
+# Preserve existing secret.env across updates (rsync --delete would remove it)
+if [[ -f "$SECRET_FILE" ]]; then
+  TMP_SECRET="/tmp/secret.env.$$"
+  mv "$SECRET_FILE" "$TMP_SECRET"
+fi
+
 rsync -a --delete ./ "$INSTALL_DIR"/
 
-
+# Restore secret.env if it existed
+if [[ -n "${TMP_SECRET:-}" && -f "$TMP_SECRET" ]]; then
+  mv "$TMP_SECRET" "$SECRET_FILE"
+fi
 # Restore DB if we preserved it
 if [[ -n "${TMP_DB:-}" ]]; then
   mv "$TMP_DB" "$DB_PATH"
@@ -147,6 +158,20 @@ echo "====================="
 
 # --- Create secret.env ---
 echo "Creating protected secret.env file..."
+# Generate a persistent SECRET_KEY for Flask sessions (required for stable admin auth)
+# Reuse existing SECRET_KEY if present to avoid invalidating sessions on upgrades
+if [[ -f "$SECRET_FILE" ]]; then
+  EXISTING_SECRET_KEY=$(grep -E '^SECRET_KEY=' "$SECRET_FILE" | head -n1 | cut -d= -f2- || true)
+else
+  EXISTING_SECRET_KEY=""
+fi
+
+if [[ -n "${EXISTING_SECRET_KEY:-}" ]]; then
+  SECRET_KEY="$EXISTING_SECRET_KEY"
+else
+  SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+fi
+
 cat > "$SECRET_FILE" <<EOF
 MQTT_BROKER=$MQTT_BROKER
 MQTT_PORT=$MQTT_PORT
@@ -155,6 +180,8 @@ MQTT_PASSWORD=$MQTT_PASSWORD
 MQTT_TOPICS=$MQTT_TOPICS
 FLASK_PORT=$FLASK_PORT
 DB_PATH=$DB_PATH
+DATA_DB_DIR=$INSTALL_DIR/data
+SECRET_KEY=$SECRET_KEY
 EOF
 
 chown root:mqttplot "$SECRET_FILE"
@@ -227,9 +254,40 @@ PY
 '
 
 
-# --- Write systemd service file ---
-echo "Writing systemd service file..."
-tee "$SERVICE_FILE" >/dev/null <<EOF
+# --- Install systemd service file ---
+echo "Installing systemd service file..."
+SRC_SERVICE_FILE="$INSTALL_DIR/deploy/mqttplot.service"
+
+if [[ -f "$SRC_SERVICE_FILE" ]]; then
+  cp -f "$SRC_SERVICE_FILE" "$SERVICE_FILE"
+else
+  echo "Warning: $SRC_SERVICE_FILE not found. Falling back to generating $SERVICE_FILE."
+  tee "$SERVICE_FILE" >/dev/null <<EOF
+[Unit]
+Description=MQTTPlot Data Collector and Web Server
+After=network.target
+
+[Service]
+User=mqttplot
+Group=mqttplot
+WorkingDirectory=$INSTALL_DIR
+Environment=FLASK_ENV=production
+Environment=FLASK_DEBUG=0
+Environment=PYTHONUNBUFFERED=1
+Environment=MQTTPLOT_LOG_LEVEL=INFO
+EnvironmentFile=$SECRET_FILE
+ExecStart=$INSTALL_DIR/venv/bin/python3 -u $INSTALL_DIR/app.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:$LOG_DIR/mqttplot.log
+StandardError=append:$LOG_DIR/mqttplot.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+fi
+
+chmod 644 "$SERVICE_FILE"
 [Unit]
 Description=MQTTPlot Data Collector and Web Server
 After=network.target

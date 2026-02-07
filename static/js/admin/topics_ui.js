@@ -9,6 +9,15 @@ import {
   saveTopicMeta
 } from '../api.js';
 
+let _cachedValidationMap = {};
+let _cachedRetentionMap = {};
+let _cachedOnSelectTopic = null;
+
+// Keep stable references to rendered rows so refreshes never depend on CSS selector escaping.
+const _topicRowMap = new Map();   // topic -> <tr>
+const _rootRowMap = new Map();    // root  -> <tr>
+
+
 // Topics list UI (admin-only) — hierarchical root/subtopic table (0.8.x)
 
 function topicRootName(topic) {
@@ -19,12 +28,21 @@ function topicRootName(topic) {
 export async function loadTopics({ onSelectTopic } = {}) {
   const res = await getTopics();
   const validationMap = await safeFetchValidationRules();
+  _cachedValidationMap = validationMap || {};
+  _cachedOnSelectTopic = onSelectTopic || null;
   const retentionMap = await safeFetchRetentionPolicies();
+  _cachedRetentionMap = retentionMap || {};
 
   const div = document.getElementById('topics');
   if (!div) return;
 
   div.innerHTML = '';
+  _topicRowMap.clear();
+  _rootRowMap.clear();
+
+  // Reset row maps on full table render.
+  _topicRowMap.clear();
+  _rootRowMap.clear();
 
   const table = document.createElement('table');
   table.className = 'topics-table';
@@ -53,10 +71,15 @@ export async function loadTopics({ onSelectTopic } = {}) {
   const rootNames = Object.keys(roots).sort((a, b) => a.localeCompare(b));
   for (const root of rootNames) {
     const items = roots[root].sort((a, b) => a.topic.localeCompare(b.topic));
-    const rootTopicDisplay = `/${root}`;
+            const rootTopicDisplay = `${root}`;
 
     // Root row
     const rootRow = document.createElement('tr');
+    rootRow.dataset.root = root;
+    rootRow.classList.add('topic-root-row');
+    _rootRowMap.set(root, rootRow);
+
+    _rootRowMap.set(root, rootRow);
 
     const tdTopic = document.createElement('td');
     tdTopic.className = 'topic-root';
@@ -64,6 +87,7 @@ export async function loadTopics({ onSelectTopic } = {}) {
     rootRow.appendChild(tdTopic);
 
     const tdCount = document.createElement('td');
+    tdCount.classList.add('js-root-count');
     const rootCount = items.reduce((acc, x) => acc + (Number(x.count) || 0), 0);
     tdCount.textContent = String(rootCount);
     rootRow.appendChild(tdCount);
@@ -77,10 +101,11 @@ export async function loadTopics({ onSelectTopic } = {}) {
     const delRoot = document.createElement('button');
     delRoot.textContent = 'Delete';
     delRoot.addEventListener('click', async () => {
-      if (!confirm(`Delete ALL data for root "/${root}" and all subtopics?`)) return;
+      if (!confirm(`Delete ALL data for root "${rootTopicDisplay}" and all subtopics?`)) return;
       try {
         await deleteRootTopic(root);
-        await loadTopics({ onSelectTopic });
+        // Do NOT rebuild the table (would wipe in-progress edits). Instead, reset counts in-place.
+        resetRootCountsInDOM(root);
       } catch {
         alert('Delete failed (are you logged in as admin?)');
       }
@@ -93,6 +118,13 @@ export async function loadTopics({ onSelectTopic } = {}) {
     // Subtopic rows
     for (const t of items) {
       const row = document.createElement('tr');
+      row.dataset.topic = t.topic;
+      row.dataset.root = root;
+      row.classList.add('topic-sub-row');
+      _topicRowMap.set(t.topic, row);
+      _topicRowMap.set(t.topic, row);
+
+      _topicRowMap.set(t.topic, row);
 
       const tdT = document.createElement('td');
       tdT.className = 'topic-sub';
@@ -107,6 +139,8 @@ export async function loadTopics({ onSelectTopic } = {}) {
       row.appendChild(tdT);
 
       const tdC = document.createElement('td');
+      // Dynamic count cell must be patchable without re-rendering.
+      tdC.classList.add('js-topic-count');
       tdC.textContent = String(t.count ?? '');
       row.appendChild(tdC);
 
@@ -121,7 +155,9 @@ export async function loadTopics({ onSelectTopic } = {}) {
         if (!confirm(`Delete ALL data for topic "${t.topic}"?`)) return;
         try {
           await deleteTopic(t.topic);
-          await loadTopics({ onSelectTopic });
+          // Do NOT rebuild the table (would wipe in-progress edits). Instead, reset counts in-place.
+          setTopicCount(t.topic, 0);
+          updateRootCountFromDOM(root);
         } catch {
           alert('Delete failed (are you logged in as admin?)');
         }
@@ -136,6 +172,84 @@ export async function loadTopics({ onSelectTopic } = {}) {
   table.appendChild(tbody);
   div.appendChild(table);
 }
+
+
+function findTopicCountCell(topic) {
+  const row = _topicRowMap.get(String(topic || ''));
+  return row ? row.querySelector('.js-topic-count') : null;
+}
+
+function setTopicCount(topic, count) {
+  const cell = findTopicCountCell(topic);
+  if (cell) cell.textContent = String(Number(count) || 0);
+}
+
+function updateRootCountFromDOM(root) {
+  const rootRow = _rootRowMap.get(String(root || ''));
+  if (!rootRow) return;
+
+  let sum = 0;
+  for (const row of _topicRowMap.values()) {
+    if (String(row.dataset.root || '') !== String(root || '')) continue;
+    const c = row.querySelector('.js-topic-count');
+    sum += Number(c?.textContent || 0) || 0;
+  }
+
+  const cell = rootRow.querySelector('.js-root-count');
+  if (cell) cell.textContent = String(sum);
+}
+
+function resetRootCountsInDOM(root) {
+  for (const [topic, row] of _topicRowMap.entries()) {
+    if (String(row.dataset.root || '') !== String(root || '')) continue;
+    const c = row.querySelector('.js-topic-count');
+    if (c) c.textContent = '0';
+  }
+  updateRootCountFromDOM(root);
+}
+
+// Minimal CSS escape helper for attribute selectors; uses built-in if available.
+function cssEscape(s) {
+  if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(String(s));
+  return String(s).replace(/["\\]/g, '\\$&');
+}
+
+// Refresh only dynamic fields (counts, last seen) without rebuilding the table.
+// Safe to run on an interval; it will not touch any <input>/<select> values.
+export async function refreshTopicCounts() {
+  const div = document.getElementById('topics');
+  if (!div) return;
+
+  let res;
+  try {
+    res = await getTopics();
+  } catch {
+    return;
+  }
+  if (!Array.isArray(res)) return;
+
+  // Update subtopic counts in-place (existing rows only).
+  for (const t of res) {
+    if (!t || !t.topic) continue;
+    const cell = findTopicCountCell(t.topic);
+    if (cell) cell.textContent = String(Number(t.count) || 0);
+  }
+
+  // Update root counts based on the fetched dataset (authoritative).
+  const roots = {};
+  for (const t of res) {
+    const r = topicRootName(t.topic);
+    if (!roots[r]) roots[r] = 0;
+    roots[r] += Number(t.count) || 0;
+  }
+  for (const [root, total] of Object.entries(roots)) {
+    const rootRow = _rootRowMap.get(String(root || ''));
+    if (!rootRow) continue;
+    const cell = rootRow.querySelector('.js-root-count');
+    if (cell) cell.textContent = String(Number(total) || 0);
+  }
+}
+
 
 function retentionControls(rootName, pol) {
   const wrap = document.createElement('div');
@@ -233,8 +347,8 @@ function topicSettingsControls(topicRow, validationMap) {
   units.className = 'select-compact';
   units.innerHTML = `
     <option value="">Units (—)</option>
-    <option value="distance_m">Distance (m)</option>
-    <option value="distance_ftin">Distance (ft/in)</option>
+    <option value="distance_m">meters</option>
+    <option value="distance_ftin">feet</option>
     <option value="temp_f">Temperature (°F)</option>
     <option value="temp_c">Temperature (°C)</option>
     <option value="pressure_kpa">Pressure (kPa)</option>
@@ -255,13 +369,11 @@ function topicSettingsControls(topicRow, validationMap) {
 
   const saveBtn = document.createElement('button');
   saveBtn.textContent = 'Save';
-  saveBtn.style.minWidth = '74px';
-  saveBtn.style.height = '100%';
+  saveBtn.className = 'topic-save-btn';
 
   const status = document.createElement('span');
   status.className = 'validation-status';
-  status.style.display = 'block';
-  status.style.marginTop = '6px';
+  status.classList.add('topic-save-status');
 
   function clampLen(el) {
     el.addEventListener('input', () => {
@@ -286,10 +398,7 @@ function topicSettingsControls(topicRow, validationMap) {
   left.appendChild(row2);
 
   const right = document.createElement('div');
-  right.style.display = 'flex';
-  right.style.flexDirection = 'column';
-  right.style.justifyContent = 'center';
-  right.style.alignItems = 'flex-start';
+  right.className = 'topic-save-col';
   right.appendChild(saveBtn);
   right.appendChild(status);
 

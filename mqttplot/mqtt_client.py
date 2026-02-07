@@ -4,6 +4,7 @@ Refactor note: extracted from legacy root app.py as part of 0.6.2 code reorganiz
 """
 from __future__ import annotations
 
+import os
 import sys, time, random
 from datetime import datetime, timezone
 import logging
@@ -17,6 +18,22 @@ from . import config
 from .storage import store_topic_msg, get_app_meta_value
 
 logger = logging.getLogger(__name__)
+
+
+def _mqtt_rx_log_level(app) -> int:
+    """Control per-message MQTT RX logging.
+
+    - In production/systemd, we avoid logging every message at INFO by default
+      to keep journals readable.
+    - In development (Flask debug) we log RX at INFO for visibility.
+    - Users can override explicitly via MQTTPLOT_LOG_MQTT_RX=1.
+    """
+    env_flag = os.environ.get("MQTTPLOT_LOG_MQTT_RX", "").strip().lower()
+    if env_flag in {"1", "true", "yes", "on"}:
+        return logging.INFO
+    if getattr(app, "debug", False):
+        return logging.INFO
+    return logging.DEBUG
 
 @dataclass
 class MqttStatus:
@@ -110,7 +127,12 @@ def mqtt_worker(app, socketio, stop_event):
             pass
 
     def _on_message(c, userdata, msg):
-        logger.info("MQTT RX %s %r", msg.topic, msg.payload)
+        lvl = _mqtt_rx_log_level(app)
+        # Avoid dumping huge payloads into logs; show a short preview.
+        payload = msg.payload or b""
+        preview = payload[:160]
+        suffix = "" if len(payload) <= 160 else "…"
+        logger.log(lvl, "MQTT RX %s (%d bytes) %r%s", msg.topic, len(payload), preview, suffix)
         try:
             # App context is fine for logging/config; ingestion itself is thread-owned
             with app.app_context():

@@ -65,6 +65,32 @@ button {
   border-radius: 6px;
 }
 
+
+
+#app-title {
+  flex: 1;
+  text-align: center;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  background: rgba(255, 255, 255, 0.9);
+  padding: 6px 10px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+}
+
+.app-version {
+  font-weight: 600;
+  font-size: 0.85em;
+  opacity: 0.85;
+  margin-left: 6px;
+  white-space: nowrap;
+}
+
+.settings-current {
+  display: inline-block;
+  font-size: 0.95rem;
+}
+
 #admin-bar a,
 #admin-bar span {
   margin-left: 8px;
@@ -290,3 +316,81 @@ button {
   font-weight: 600;
 }
 
+
+
+/* Utility spacing/size classes (0.8.1) */
+.ml-12 { margin-left: 12px; }
+.mt-6 { margin-top: 6px; }
+.mt-8 { margin-top: 8px; }
+.mt-10 { margin-top: 10px; }
+.w-110 { width: 110px; }
+.w-360 { width: 360px; }
+.text-red { color: red; }
+
+/* Topic table layout helpers (0.8.1) */
+.topic-save-col {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.topic-save-btn {
+  min-width: 74px;
+  height: 100%;
+}
+
+.topic-save-status {
+  display: block;
+  margin-top: 6px;
+}
+
+/* ---------- index.html extracted styles ---------- */
+
+.flex-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.flex-grow {
+    flex: 1 1 auto;
+}
+
+.mt-10 {
+    margin-top: 10px;
+}
+
+.mt-20 {
+    margin-top: 20px;
+}
+
+.full-size {
+    width: 100%;
+    height: 100%;
+}
+
+.center-muted {
+    text-align: center;
+    color: #888;
+}
+
+.push-right {
+    margin-left: auto;
+}
+
+/* ---------- extracted inline styles (templates) ---------- */
+
+.idx-756adb2c { border-collapse: collapse; width: 100%; max-width: 980px; }
+.idx-432e1ff2 { text-align: left; padding: 4px; }
+.idx-22f61d20 { margin-left: 10px; }
+.pltbase-24a4ec50 { padding: 8px 10px; }
+.pltbase-ff227d06 { margin: 0; }
+.pltbase-a28d1ba3 { opacity: 0.75; }
+.pltbase-f2892a2e { display: none; }
+.pltbase-e979f203 { margin-top: 6px; opacity: 0.85; }
+.pltbase-73f2857b { display: none; margin-top: 8px; }
+
+
+/* Utility: force a new row in flex-wrap containers */
+.flex-break { flex-basis: 100%; height: 0; }

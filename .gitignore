@@ -26,3 +26,7 @@ test/
 
 # Runtime / tool-generated cookies
 cookies.txt
+
+# Installer-generated secrets
+secret.env
+secret.env.*

@@ -94,6 +94,17 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     document.getElementById('btnSaveBroker')?.addEventListener('click', async () => {
+
+  // v0.8.1: Topics save button (UI convenience) - reuse broker save logic
+  const btnSaveTopics = document.getElementById('btnSaveTopics');
+  const btnSaveBroker = document.getElementById('btnSaveBroker');
+  if (btnSaveTopics && btnSaveBroker) {
+    btnSaveTopics.addEventListener('click', (e) => {
+      e.preventDefault();
+      // Reuse the broker save handler (sends host/port/topics from inputs)
+      btnSaveBroker.click();
+    });
+  }
       const broker_host = (hostEl?.value || '').trim();
       const broker_port = portEl?.value;
       const broker_topics = (topicsEl?.value || '').trim();
@@ -109,21 +120,6 @@ document.addEventListener('DOMContentLoaded', () => {
         alert('Failed to save broker settings (are you logged in as admin?)');
       }
     });
-    // v0.8.1: Topics save button - save ONLY broker topics (do not overwrite host/port)
-    document.getElementById('btnSaveTopics')?.addEventListener('click', async () => {
-      const topicsEl2 = document.getElementById('broker_topics');
-      const broker_topics = (topicsEl2?.value || '').trim();
-      try {
-        await saveAdminSettings({ broker_topics });
-        if (brokerStatus) brokerStatus.textContent = 'Saved';
-        const curTopics = document.getElementById('current_broker_topics');
-        if (curTopics) curTopics.textContent = broker_topics;
-      } catch {
-        if (brokerStatus) brokerStatus.textContent = 'Save failed';
-        alert('Failed to save topics (are you logged in as admin?)');
-      }
-    });
-
   }
 
   // --- Plot wiring (popup windows) ---
@@ -170,10 +166,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Periodically refresh only the counters / last-seen fields in-place.
   // This avoids re-rendering the table, which would wipe in-progress edits.
-  // Reduced to 15s for better scaling with 10–20 concurrent clients.
   setInterval(() => {
     refreshTopicCounts();
-  }, 15000);
+  }, 5000);
 
   // --- Public plot list ---
   if (document.getElementById('public_plots_list')) refreshPublicPlots();

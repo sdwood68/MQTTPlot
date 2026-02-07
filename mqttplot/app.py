@@ -21,8 +21,10 @@ if ASYNC_MODE == "eventlet":
 import io, json, time, threading, sqlite3, logging
 from datetime import datetime, timedelta
 from flask import Flask, jsonify, request, render_template, send_file
+from flask import current_app
 from flask import session, redirect, abort, url_for
 from flask_socketio import SocketIO
+
 import paho.mqtt.client as mqtt
 import plotly.graph_objects as go
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -87,6 +89,17 @@ def start_mqtt_worker() -> None:
 
 def require_admin(): 
     if not is_admin():
+        abort(403)
+
+
+def require_csrf():
+    """Basic CSRF protection for admin state-changing endpoints.
+
+    Admin UI sets X-CSRF-Token from a meta tag populated server-side.
+    """
+    token = session.get("csrf_token")
+    header = request.headers.get("X-CSRF-Token")
+    if not token or not header or header != token:
         abort(403)
 
 def parse_time(s):
@@ -211,9 +224,24 @@ def api_plot_image():
     buf.seek(0); return send_file(buf, mimetype='image/png')
 
 
+def _default_system_tz() -> str:
+    """Best-effort default time zone for fresh installs.
+    Prefer the host's local ZoneInfo key when available; otherwise fall back to TZ or UTC.
+    """
+    try:
+        # datetime.now().astimezone().tzinfo is often a zoneinfo.ZoneInfo on Linux
+        tzinfo = datetime.now().astimezone().tzinfo
+        key = getattr(tzinfo, "key", None)
+        if key:
+            return str(key)
+    except Exception:
+        pass
+    return os.environ.get("TZ") or "UTC"
+
+
 def get_time_zone() -> str:
     tz = get_app_meta_value('app.timezone', None)
-    return tz or 'UTC'
+    return (tz or '').strip() or _default_system_tz()
 
 
 def _dt_from_epoch_local(epoch: float) -> datetime:
@@ -264,6 +292,11 @@ def _fetch_timeseries(topic: str, start: str | None, end: str | None, limit: int
 
     tl = topic_root(topic)
     db_path = os.path.join(config.DATA_DB_DIR, f"{tl}.db")
+    try:
+        current_app.logger.info("FETCH timeseries topic=%s root=%s db_path=%s exists=%s start=%s end=%s limit=%s",
+                              topic, tl, db_path, os.path.exists(db_path), start_epoch, end_epoch, limit)
+    except Exception:
+        pass
     if not os.path.exists(db_path):
         return []
 
@@ -295,6 +328,10 @@ def _fetch_timeseries(topic: str, start: str | None, end: str | None, limit: int
 
     rows = con.execute(sql, tuple(params)).fetchall()
     con.close()
+    try:
+        current_app.logger.info("FETCH timeseries result topic=%s rows=%s", topic, len(rows))
+    except Exception:
+        pass
 
     out = []
     for r in rows:
@@ -309,6 +346,10 @@ def _fetch_topic_bounds(topic: str) -> dict | None:
     """Return {min_ts, max_ts} in ISO format for a topic, or None if not available."""
     tl = topic_root(topic)
     db_path = os.path.join(config.DATA_DB_DIR, f"{tl}.db")
+    try:
+        current_app.logger.info("FETCH bounds topic=%s root=%s db_path=%s exists=%s", topic, tl, db_path, os.path.exists(db_path))
+    except Exception:
+        pass
     if not os.path.exists(db_path):
         return None
 
@@ -328,6 +369,10 @@ def _fetch_topic_bounds(topic: str) -> dict | None:
     ).fetchone()
     con.close()
 
+    try:
+        current_app.logger.info("FETCH bounds result topic=%s min=%s max=%s", topic, r["min_ts"], r["max_ts"])
+    except Exception:
+        pass
     if r["min_ts"] is None or r["max_ts"] is None:
         return None
 
@@ -426,12 +471,22 @@ def viewer():
 
 @app.route("/api/version")
 def api_version():
-    db = sqlite3.connect(config.DB_PATH)
-    cur = db.cursor()
-    cur.execute("SELECT value FROM metadata WHERE key='app_version'")
-    row = cur.fetchone()
-    db.close()
-    return {"version": row[0] if row else "unknown"}
+    """Return running application version.
+
+    This endpoint must be resilient on fresh installs and across DB migrations.
+    """
+    # Prefer stored app_meta value if present, but never fail.
+    try:
+        v = get_app_meta_value("app_version")
+        if v:
+            return jsonify({"version": v})
+    except Exception:
+        # Avoid 500s if metadata DB schema is mid-migration.
+        try:
+            current_app.logger.exception("api_version: failed reading app_meta")
+        except Exception:
+            pass
+    return jsonify({"version": __version__})
 
 @app.route("/admin/login", methods=["GET", "POST"])
 def admin_login_page():
@@ -449,6 +504,7 @@ def admin_login_page():
             session.clear()
             session["is_admin"] = True
             session["admin_user"] = username
+            session["csrf_token"] = secrets.token_urlsafe(32)
             return redirect("/")
 
         return render_template("admin_login.html", error="Invalid username or password")
@@ -467,6 +523,7 @@ def admin_plot_window():
         "admin_plot_window.html",
         admin=True,
         admin_user=session.get("admin_user"),
+        csrf_token=session.get("csrf_token"),
     )
 
 
@@ -505,6 +562,8 @@ def index():
         admin=admin,
         admin_user=session.get("admin_user"),
         public_plots=public_plots,
+        app_version=__version__,
+        csrf_token=session.get("csrf_token"),
     )
 
 
@@ -692,6 +751,7 @@ def admin_public_plots_delete(slug: str):
 @app.route("/api/admin/topic/<path:topic>", methods=["DELETE"])
 def admin_delete_topic(topic):
     require_admin()
+    require_csrf()
     if not is_admin():
         return jsonify({"error": "admin required"}), 403
 
@@ -702,7 +762,18 @@ def admin_delete_topic(topic):
 
     # Remove from topic_stats (main DB), keep topic_meta (visibility) unless you prefer to remove it too
     db = get_meta_db()
-    db.execute("DELETE FROM topic_stats WHERE topic = ?", (topic,))
+    # Keep the topic visible; purge counters instead of deleting the row.
+    db.execute(
+        """UPDATE topic_stats
+               SET first_seen_ts_epoch = NULL,
+                   last_seen_ts_epoch  = NULL,
+                   message_count       = 0,
+                   last_value          = NULL,
+                   stored_count        = 0,
+                   dropped_count       = 0
+             WHERE topic = ?""",
+        (topic,),
+    )
     db.commit()
 
     return jsonify({
@@ -777,9 +848,65 @@ def publish_mqtt(topic, payload):
     client.publish(topic, payload, qos=1, retain=False)
     client.disconnect()
 
+@app.route("/api/admin/topic_delete", methods=["POST"])
+def admin_delete_topic_post():
+    """Delete ALL data for a single topic. Uses JSON body to avoid encoded-slash path issues."""
+    require_admin()
+    require_csrf()
+    payload = request.get_json(silent=True) or {}
+    topic = (payload.get("topic") or "").strip()
+    if not topic:
+        return jsonify({"error": "missing topic"}), 400
+
+    # Data DB schema stores topics in a separate table; messages reference topic_id
+    data_db = get_data_db(topic)
+    topic_row = data_db.execute("SELECT id FROM topics WHERE topic = ?", (topic,)).fetchone()
+    deleted_rows = 0
+    if topic_row:
+        topic_id = int(topic_row[0])
+        cur = data_db.execute("DELETE FROM messages WHERE topic_id = ?", (topic_id,))
+        deleted_rows = cur.rowcount
+        # Optional: remove the topic row so a re-ingest will recreate it cleanly
+        # NOTE: keep topic definition so it remains in topic list
+        # data_db.execute("DELETE FROM topics WHERE id = ?", (topic_id,))
+        data_db.commit()
+    data_db.close()
+
+    db = get_meta_db()
+    # Keep the topic visible; purge counters instead of deleting the row.
+    db.execute(
+        """UPDATE topic_stats
+               SET first_seen_ts_epoch = NULL,
+                   last_seen_ts_epoch  = NULL,
+                   message_count       = 0,
+                   last_value          = NULL,
+                   stored_count        = 0,
+                   dropped_count       = 0
+             WHERE topic = ?""",
+        (topic,),
+    )
+    db.commit()
+
+    return jsonify({"status": "ok", "topic": topic, "deleted_rows": deleted_rows})
+
+
+@app.route("/api/admin/root_delete", methods=["POST"])
+def admin_delete_root_post():
+    """Delete ALL data + metadata for a root topic using JSON body."""
+    require_admin()
+    require_csrf()
+    payload = request.get_json(silent=True) or {}
+    root = str(payload.get("root") or "").strip().replace("/", "")
+    if not root:
+        return jsonify({"error": "missing root"}), 400
+    # delegate to existing implementation for consistency
+    return admin_delete_root(root)
+
+
 @app.route("/api/admin/ota", methods=["POST"])
 def admin_ota():
     require_admin()
+    require_csrf()
     if not is_admin():
         return jsonify({"error": "admin required"}), 403
 
@@ -802,6 +929,7 @@ def admin_ota():
 @app.route('/api/admin/topic_visibility', methods=['POST'])
 def admin_topic_visibility():
     require_admin()
+    require_csrf()
     data = request.get_json()
     topic = data['topic']
     public = 1 if data['public'] else 0
@@ -819,6 +947,7 @@ def admin_topic_visibility():
 @app.route("/api/admin/retention", methods=["GET"])
 def admin_get_retention():
     require_admin()
+    require_csrf()
     db = get_meta_db()
     cur = db.execute("SELECT top_level, max_age_days, max_rows FROM retention_policies ORDER BY top_level")
     return jsonify([dict(r) for r in cur.fetchall()])
@@ -1001,6 +1130,8 @@ def main():
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
+        stream=sys.stdout,
+        force=True,
     )
     # Reduce logging noise from Flask and SocketIO
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
@@ -1034,8 +1165,20 @@ def main():
     init_admin_user()
 
     # --- Start MQTT ingest thread (ONLY here) ---
+    # In Flask/SocketIO debug mode, the Werkzeug reloader starts a *parent* process
+    # and then a separate *child* process that actually serves requests.
+    # If we start MQTT ingestion in both, every incoming MQTT message will be
+    # processed twice (duplicate RX logs + duplicate DB writes).
+    #
+    # Werkzeug sets WERKZEUG_RUN_MAIN="true" only in the serving (child) process.
+    is_reloader_child = (os.environ.get("WERKZEUG_RUN_MAIN") == "true")
+    debug_enabled = (os.environ.get("FLASK_DEBUG") == "1") or (os.environ.get("FLASK_ENV") == "development")
+
     if getattr(config, "MQTT_ENABLED", True):
-        start_mqtt_worker()
+        if debug_enabled and not is_reloader_child:
+            logging.info("Werkzeug reloader parent detected — skipping MQTT worker startup")
+        else:
+            start_mqtt_worker()
     else:
         logging.info("MQTT_ENABLED=0 — MQTT ingest disabled")
 
