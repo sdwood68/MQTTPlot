@@ -24,7 +24,7 @@
       MQTT: (checking…)
     </div>
 
-    <div id="app-title">MQTTPlot</div>
+    <div id="app-title">MQTTPlot <span class="app-version">v{{ app_version }}</span></div>
 
     <div id="admin-bar">
       {% if admin %}
@@ -158,6 +158,29 @@
     <div id="public_plots_list"></div>
   </div>
   {% endif %}
+
+<script>
+(function () {
+  function applyA11yLabels(root) {
+    (root || document).querySelectorAll('select.pp_topic_yaxis:not([aria-label])')
+      .forEach(el => el.setAttribute('aria-label', 'Y-axis selection'));
+
+    (root || document).querySelectorAll('select.pp_topic_mode:not([aria-label])')
+      .forEach(el => el.setAttribute('aria-label', 'Plot mode'));
+  }
+
+  // Label any selects already present
+  applyA11yLabels(document);
+
+  // Label selects added later (rows injected dynamically)
+  const tbody = document.getElementById('pp_topics_tbody');
+  if (tbody && window.MutationObserver) {
+    const obs = new MutationObserver(() => applyA11yLabels(tbody));
+    obs.observe(tbody, { childList: true, subtree: true });
+  }
+})();
+</script>
+
 </body>
 
 </html>

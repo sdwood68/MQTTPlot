@@ -78,6 +78,14 @@ button {
   border-radius: 6px;
 }
 
+.app-version {
+  font-weight: 600;
+  font-size: 0.85em;
+  opacity: 0.85;
+  margin-left: 6px;
+  white-space: nowrap;
+}
+
 .settings-current {
   display: inline-block;
   font-size: 0.95rem;

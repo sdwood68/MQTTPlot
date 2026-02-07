@@ -24,6 +24,7 @@ from flask import Flask, jsonify, request, render_template, send_file
 from flask import current_app
 from flask import session, redirect, abort, url_for
 from flask_socketio import SocketIO
+
 import paho.mqtt.client as mqtt
 import plotly.graph_objects as go
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -561,6 +562,7 @@ def index():
         admin=admin,
         admin_user=session.get("admin_user"),
         public_plots=public_plots,
+        app_version=__version__,
         csrf_token=session.get("csrf_token"),
     )
 
@@ -1128,6 +1130,8 @@ def main():
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
+        stream=sys.stdout,
+        force=True,
     )
     # Reduce logging noise from Flask and SocketIO
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
@@ -1161,8 +1165,20 @@ def main():
     init_admin_user()
 
     # --- Start MQTT ingest thread (ONLY here) ---
+    # In Flask/SocketIO debug mode, the Werkzeug reloader starts a *parent* process
+    # and then a separate *child* process that actually serves requests.
+    # If we start MQTT ingestion in both, every incoming MQTT message will be
+    # processed twice (duplicate RX logs + duplicate DB writes).
+    #
+    # Werkzeug sets WERKZEUG_RUN_MAIN="true" only in the serving (child) process.
+    is_reloader_child = (os.environ.get("WERKZEUG_RUN_MAIN") == "true")
+    debug_enabled = (os.environ.get("FLASK_DEBUG") == "1") or (os.environ.get("FLASK_ENV") == "development")
+
     if getattr(config, "MQTT_ENABLED", True):
-        start_mqtt_worker()
+        if debug_enabled and not is_reloader_child:
+            logging.info("Werkzeug reloader parent detected — skipping MQTT worker startup")
+        else:
+            start_mqtt_worker()
     else:
         logging.info("MQTT_ENABLED=0 — MQTT ingest disabled")
 

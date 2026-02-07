@@ -371,8 +371,8 @@
       }catch{}
     }
 
-    // Poll as fallback when live
-    setInterval(()=>{ if(state.followTail) rerender(); }, 5000);
+    // Poll as fallback when Live is active (reduced to 15s for scale)
+    setInterval(()=>{ if(state.followTail) rerender(); }, 15000);
   }
 
   async function main(){

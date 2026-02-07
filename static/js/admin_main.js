@@ -170,9 +170,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Periodically refresh only the counters / last-seen fields in-place.
   // This avoids re-rendering the table, which would wipe in-progress edits.
+  // Reduced to 15s for better scaling with 10–20 concurrent clients.
   setInterval(() => {
     refreshTopicCounts();
-  }, 5000);
+  }, 15000);
 
   // --- Public plot list ---
   if (document.getElementById('public_plots_list')) refreshPublicPlots();

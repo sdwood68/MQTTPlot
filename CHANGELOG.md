@@ -1,8 +1,27 @@
 # Changelog
 
-## 0.8.2 (Unreleasde)
+## 0.8.2 2026-02-06
 
-- TBD
+### Added
+
+- Display the application version next to the “MQTTPlot” title in the floating
+  banner.
+
+### Changed
+
+- Polling and UI refresh:
+  - Admin Topics message-count polling reduced to 15 seconds (in-place update; no
+    table re-render).
+  - Plot pages poll for new data every 15 seconds **only when “Live” is active**
+    (admin and public plots).
+
+### Fixed
+
+- Development: prevent the Flask/Werkzeug debug reloader from starting the MQTT
+  client twice (eliminates duplicate MQTT RX logs and duplicate ingestion in
+  debug sessions).
+- Public plots: align refresh cadence with the “15s when Live” policy (previously
+  observed ~60s refresh behavior).
 
 ## 0.8.1 - Admin Page Clean-up
 

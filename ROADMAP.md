@@ -1,6 +1,6 @@
 # MQTTPlot Roadmap
 
-This document outlines the planned evolution of MQTTPlot following the 0.8.0 release.
+This document outlines the planned evolution of MQTTPlot following the 0.8.x releases.
 
 ---
 
@@ -49,60 +49,75 @@ Live indicator)
 - Y-axis tick enforcement based on Min Tick (including LCM alignment for
 two-topic axes)
 
+### 0.8.1 — Admin Page Cleanup
+
+- Move the app title “MQTTPlot” to the center of the floating banner with:
+  - connection status
+  - “Admin: \<user\> Logout”
+- Rename “Admin Settings” to “Broker Settings”
+- Broker Settings layout:
+  - Row 1: show current timezone; timezone control becomes a dropdown selector
+  - Row 2: show current broker host (URL/IP) and port, followed by editable
+  host + port fields
+    - Host entry supports both IP addresses and URLs
+- Remove “Admin Mode Enable” (self-evident)
+- Topics table:
+  - Root topic display reflects the actual topic name (do not automatically
+  insert a leading “/”)
+  - Change units:
+    - “Distance (ft/in)” → “feet”
+    - “Distance (m)” → “meters”
+  - Never store the “ota” subtopic (control channel for device)
+- Consolidate CSS inline styles into mqttplot.css
+- Re-layout Topics UI:
+  - Move current topic values from row 2 to row 3
+  - Move Topics entry to row 4 and extend its length by two
+
 ---
+
+### 0.8.2 — Version Display + Reduced Polling
+
+- Display the app version next to “MQTTPlot” in the banner (e.g., “MQTTPlot v0.8.2”)
+
+- Polling policy (support 10–20 concurrent clients)
+  - Admin mode: poll message counts every 15 seconds even when no plot is displayed
+  - Plot pages (admin and public): poll every 15 seconds **only when “Live” is active**
+
+- Diagnostics (development)
+  - Ensure the Flask/Werkzeug debug reloader does not start the MQTT client twice
+    (prevents duplicate RX logs and duplicate ingestion during debug)
 
 ## Planned
 
-### 0.8.1 — Admin Page Clean-up
+### 0.9.x — MQTT JSON Data Payloads
 
-- Move the app title 'MQTTPlot' to the senter of the floating bannor with the
-connection status and Admin: admin Logout
-- rename the 'Admin Settings' to Broker Settings
-- In the 'Broker Settings' on row 1 show the cuurent timezone and then the
-Timezone Entry box should be a pull down menue to select the timezone.
-- In the 'Broker Settings' on row 2 show the current host URL/IP address and
-port Followed by the host entry and port. Host entry should support Ip address
-and URLs
-- Remove the 'Admin Mode Enable' that is self evident.
-- Under 'Topics'
-  - The root topic has a forward slach in fron of it, but the root topic does
-  not use the '/'. Make sure it reflect the actual topic name and does not
-  automaticly insert '/' if it is not used.
-  - Change units 'Distance (ft/in)' to just 'feet'
-  - Change units 'Distance (m)' to just 'meters'
-- Never Store the subtopic 'ota' That is a controll channel for the device.
-- Consolidate css inline styles into mqttplot.css
-- Move the current Topic's values from row 2 to row 3
-- Move teh topics Topics' entry to two 4 and extend its length by two.
+- Add support for receiving MQTT data as a JSON payload that includes:
+  - value
+  - units
+- Automatically assign plot units from the JSON payload when specified
 
-### 0.8.2 - Small plot preview
+### 0.10.x — Data Management and Scale
 
-- create a plot preview that is 50% smaller than the normal plot.
-  - The slug will link to the plot preview.
-  - The plot preview shows the lastest two hours.
-  - It update as new data comes in.
-  - It does not have plot controlls
-  - clicking on it opens a pop-up window with the full plot with controls.  
+- Admin Page
+  - Add a checkbox per subtopic to ignore incoming data (stop storing when checked)
+  - Add a root-level setting: Max Messages per Hour (per subtopic)
+- Add protection against message flooding:
+  - If message rate exceeds Max Messages per Hour, automatically set “ignore
+  incoming data”
+  - Example: if set to 45/hour and 46 messages arrive within 15 minutes, trigger
+  protection
+- Drop any data points that fall outside the per-topic min/max limits
 
-### 0.8.3 - Ignore Topics, Flooding and bad data
+### 0.11.x — Small Plot Preview Windows
 
-- On the Admin Page
-  - Add a check box per subtopic to ignore incoming data. When checked the app
-  will stop storing data.
-  - Add an entry at the top level topic for Max Maessages per hour per subtopic.
-- Add protection form excessive message flooding. If the messaage rate is
-greater than than the Max Messages per hour. Than set the ignore incoming data
-check box for the subtopic that is exceding the rate and stop storing the data.
-Example if it is set to 45 messages per hour and if I get 46 messages within 15
-miniute it will trigger protection.
-- drop any data points that fall outside of the min / max limits set for the
-topic.
+- Create a plot preview that is ~50% smaller than the normal plot
+- The slug links to the plot preview
+- Preview shows the latest two hours
+- Preview updates as new data arrives
+- Preview has no plot controls
+- Clicking the preview opens a popup window with the full plot (with controls)
 
-### 0.8.4 - MQTT Jason Data Payloads
-
-- Add support for reveciving MQTT data with Jason load that includes the value
-and units for the data received.
-- Automaticly assignment plot units from the the Jason data if specified.
+## Focus: long-term operation and performance
 
 ### Dashboards and Access Control
 
@@ -113,11 +128,6 @@ Focus: composition and controlled sharing
 - Optional authentication layer
 - Per-plot and per-dashboard access controls
 - Configurable auto-refresh intervals
-
-### 0.9.x — Data Management and Scale
-
-Focus: long-term operation and performance
-
 - Retention policies (per topic / per plot)
 - Automatic downsampling and aggregation
 - Database compaction and maintenance tools

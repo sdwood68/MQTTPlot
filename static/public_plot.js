@@ -482,16 +482,20 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   const refresh = (result.specResp.spec || result.specResp).refresh;
   if (refresh && refresh.enabled) {
-    const intervalMs = Math.max(2000, Number(refresh.intervalMs || 5000));
+    // Public plot polling:
+    // - Poll at most every 15s (server scale: 10–20 simultaneous connections)
+    // - Only poll when "Live" is active (followTail=true)
+    const intervalMs = 15000;
     setInterval(() => {
-      // If pinned to tail, re-render with followTail = true (window advances to newest sample).
-      // If not pinned, keep the user's selected end (no hijacking).
-      renderOnce(slug, windowState).then((r) => {
-        windowState.start = r.start;
-        windowState.end = r.end;
-        windowState.tail = r.tail;
-        updateLiveIndicator(windowState);
-      }).catch(() => {});
+      if (!windowState.followTail) return;
+      renderOnce(slug, windowState)
+        .then((r) => {
+          windowState.start = r.start;
+          windowState.end = r.end;
+          windowState.tail = r.tail;
+          updateLiveIndicator(windowState);
+        })
+        .catch(() => {});
     }, intervalMs);
   }
 });
