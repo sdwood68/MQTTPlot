@@ -89,6 +89,14 @@ two-topic axes)
 
 ## Planned
 
+### 0.8.3 - Firewall rules
+
+- Add fire wall rules to install scripts
+  - sudo ufw allow 5000/tcp
+- Add sqlite3 to the installer
+- Add a password reset command like'mqttplot reset-admin-password'
+- Add a credentials reload function to the install that reads secret.env edits do not require manual restarts
+
 ### 0.9.x — MQTT JSON Data Payloads
 
 - Add support for receiving MQTT data as a JSON payload that includes:
