@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.8.3-dev 2026-03-07
+
+### Added
+
+- New `mqttplot` operational CLI with `status`, `db-info`, `backup`,
+  `reset-admin-password`, and `reload` commands.
+- New `/api/health` endpoint for lightweight runtime and storage diagnostics.
+- Timestamped SQLite backup archives with automatic rotation on each backup run.
+
+### Changed
+
+- Installer now installs required OS packages including `sqlite3` and `rsync`.
+- Installer now writes backup settings to `secret.env` and creates a backups
+  directory under `/opt/mqttplot`.
+- Installer now configures the Flask port in UFW when UFW is installed and
+  active.
+- Service files are aligned on the `mqttplot` system user and the production
+  systemd configuration.
+
+### Fixed
+
+- Removed the duplicate and broken systemd service block from
+  `install_service.sh`.
+- Uninstaller now removes the CLI wrapper and preserves data/backups unless the
+  install is explicitly purged.
+
 ## 0.8.2 2026-02-06
 
 ### Added

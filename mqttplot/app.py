@@ -19,7 +19,7 @@ if ASYNC_MODE == "eventlet":
     eventlet.monkey_patch()
 
 import io, json, time, threading, sqlite3, logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from flask import Flask, jsonify, request, render_template, send_file
 from flask import current_app
 from flask import session, redirect, abort, url_for
@@ -242,6 +242,64 @@ def _default_system_tz() -> str:
 def get_time_zone() -> str:
     tz = get_app_meta_value('app.timezone', None)
     return (tz or '').strip() or _default_system_tz()
+
+
+def _db_file_size(path: str) -> int:
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        return 0
+
+
+def _health_payload() -> dict:
+    meta_path = os.path.abspath(config.DB_PATH)
+    data_dir = os.path.abspath(config.DATA_DB_DIR)
+    data_files = []
+    total_size = 0
+    if os.path.isdir(data_dir):
+        for name in sorted(os.listdir(data_dir)):
+            if not name.endswith('.db'):
+                continue
+            path = os.path.join(data_dir, name)
+            data_files.append(name)
+            total_size += _db_file_size(path)
+
+    payload = {
+        'status': 'ok',
+        'version': __version__,
+        'time_utc': datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        'mqtt': get_status(),
+        'storage': {
+            'metadata_db': meta_path,
+            'metadata_db_exists': os.path.exists(meta_path),
+            'metadata_db_size_bytes': _db_file_size(meta_path),
+            'data_db_dir': data_dir,
+            'data_db_count': len(data_files),
+            'data_db_total_size_bytes': total_size,
+            'data_dbs': data_files,
+        },
+    }
+
+    try:
+        db = get_meta_db()
+        payload['storage']['tracked_topic_count'] = int(db.execute(
+            'SELECT COUNT(*) FROM topic_stats'
+        ).fetchone()[0])
+        payload['storage']['public_plot_count'] = int(db.execute(
+            'SELECT COUNT(*) FROM public_plots'
+        ).fetchone()[0])
+    except Exception as exc:
+        payload['status'] = 'degraded'
+        payload['storage']['metadata_error'] = f"{type(exc).__name__}: {exc}"
+
+    return payload
+
+
+@app.route('/api/health')
+def api_health():
+    payload = _health_payload()
+    code = 200 if payload.get('status') == 'ok' else 503
+    return jsonify(payload), code
 
 
 def _dt_from_epoch_local(epoch: float) -> datetime:

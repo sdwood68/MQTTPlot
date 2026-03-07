@@ -89,13 +89,18 @@ two-topic axes)
 
 ## Planned
 
-### 0.8.3 - Firewall rules
+### 0.8.3 - Firewall rules and operations tooling
 
-- Add fire wall rules to install scripts
-  - sudo ufw allow 5000/tcp
-- Add sqlite3 to the installer
-- Add a password reset command like'mqttplot reset-admin-password'
-- Add a credentials reload function to the install that reads secret.env edits do not require manual restarts
+Completed in the current development baseline:
+
+- Add firewall rules to install scripts when UFW is installed and active
+- Add `sqlite3` to the installer
+- Add password reset command: `mqttplot reset-admin-password`
+- Add credentials reload command: `mqttplot reload`
+- Add service/runtime status command: `mqttplot status`
+- Add database inspection command: `mqttplot db-info`
+- Add database backup command with archive rotation: `mqttplot backup`
+- Add lightweight `/api/health` endpoint
 
 ### 0.9.x — MQTT JSON Data Payloads
 
