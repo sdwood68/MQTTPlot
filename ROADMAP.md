@@ -89,18 +89,18 @@ two-topic axes)
 
 ## Planned
 
-### 0.8.3 - Firewall rules and operations tooling
+### 0.8.3 — Operational Tooling
 
-Completed in the current development baseline:
-
-- Add firewall rules to install scripts when UFW is installed and active
+- Add firewall rule handling to install scripts
+  - `sudo ufw allow 5000/tcp` when UFW is installed and active
 - Add `sqlite3` to the installer
-- Add password reset command: `mqttplot reset-admin-password`
-- Add credentials reload command: `mqttplot reload`
-- Add service/runtime status command: `mqttplot status`
-- Add database inspection command: `mqttplot db-info`
-- Add database backup command with archive rotation: `mqttplot backup`
-- Add lightweight `/api/health` endpoint
+- Add `mqttplot reset-admin-password`
+- Add `mqttplot reload` so `secret.env` edits do not require manual service
+  commands
+- Add `mqttplot status`
+- Add `mqttplot db-info`
+- Add `mqttplot backup` with backup ZIP rotation
+- Add `/api/health` for basic service monitoring
 
 ### 0.9.x — MQTT JSON Data Payloads
 

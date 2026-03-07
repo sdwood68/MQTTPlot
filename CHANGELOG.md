@@ -4,27 +4,28 @@
 
 ### Added
 
-- New `mqttplot` operational CLI with `status`, `db-info`, `backup`,
-  `reset-admin-password`, and `reload` commands.
-- New `/api/health` endpoint for lightweight runtime and storage diagnostics.
-- Timestamped SQLite backup archives with automatic rotation on each backup run.
+- New operational CLI tool `mqttplot`
+  - `mqttplot status`
+  - `mqttplot db-info`
+  - `mqttplot backup`
+  - `mqttplot reset-admin-password`
+  - `mqttplot reload`
+- `/api/health` endpoint for basic system health monitoring.
 
 ### Changed
 
-- Installer now installs required OS packages including `sqlite3` and `rsync`.
-- Installer now writes backup settings to `secret.env` and creates a backups
-  directory under `/opt/mqttplot`.
-- Installer now configures the Flask port in UFW when UFW is installed and
-  active.
-- Service files are aligned on the `mqttplot` system user and the production
-  systemd configuration.
+- Installer now installs `sqlite3` and `rsync` automatically.
+- Installer adds a UFW allow rule for the configured Flask port when UFW is
+  installed and active.
+- Installer now recreates the Python virtual environment with corrected
+  ownership before installing dependencies.
 
 ### Fixed
 
-- Removed the duplicate and broken systemd service block from
+- Removed the duplicate/broken systemd service block in
   `install_service.sh`.
-- Uninstaller now removes the CLI wrapper and preserves data/backups unless the
-  install is explicitly purged.
+- Fixed installer failures caused by partial or stale `venv` state.
+- Aligned the top-level `mqttplot.service` with the deployed systemd unit.
 
 ## 0.8.2 2026-02-06
 

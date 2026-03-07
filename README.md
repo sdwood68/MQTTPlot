@@ -1,16 +1,36 @@
 # MQTTPlot
 
+
+## 0.8.3-dev highlights
+
+- Installer now installs `sqlite3` and `rsync` automatically.
+- Installer adds a UFW allow rule for the configured Flask port when UFW is
+  installed and active.
+- New operational CLI commands:
+  - `mqttplot status`
+  - `mqttplot db-info`
+  - `mqttplot backup`
+  - `mqttplot reset-admin-password`
+  - `mqttplot reload`
+- Added `/api/health` for basic service health checks.
+
+### Notes for install
+
+- `mqttplot reload` restarts the systemd service so edits to `secret.env`
+  take effect immediately.
+- `mqttplot backup` creates ZIP archives under `/opt/mqttplot/backups` and
+  rotates older archives automatically.
+
 **MQTTPlot** is a lightweight MQTT data ingestion and visualization service
 designed for long-running IoT and telemetry systems. It subscribes to MQTT
 topics, persists time-series data to SQLite, and serves interactive Plotly-based
 graphs via a web interface.
 
-Version **0.8.3-dev** adds operational tooling for long-running installs:
-a safer Linux installer, a dedicated `mqttplot` CLI for service and database
-operations, a lightweight health endpoint, and timestamped database backups with
-automatic archive rotation. MQTTPlot continues to provide public, slug-based
-plot URLs, multi-topic plotting, and embeddable plot views without exposing
-internal configuration.
+Version **0.8.1** expands on the public viewer/admin workflow with a unified
+plot window, stronger topic hierarchy tools, retention/validation controls, and
+persistent app settings. **public, slug-based plot URLs**,
+**multi-topic plotting**, and **embeddable plot views**, enabling MQTTPlot to
+act as a read-only visualization endpoint without exposing internal configuration.
 
 ---
 
@@ -168,8 +188,8 @@ From the project root:
 ```bash
 git clone https://github.com/sdwood68/MQTTPlot.git
 cd MQTTPlot
-chmod +x install_service.sh uninstall_service.sh
-sudo ./install_service.sh
+chmod +x install.sh uninstall.sh
+sudo ./install.sh
 ```
 
 #### What the installer does
@@ -179,10 +199,9 @@ sudo ./install_service.sh
 - Creates persistent directories:
 
 ```text
-/opt/mqttplot/data      # Per-root SQLite databases
-/opt/mqttplot/backups   # Timestamped backup archives
-/var/log/mqttplot       # Application logs
-/opt/mqttplot/secret.env # Runtime configuration
+/var/lib/mqttplot     # SQLite databases
+/var/log/mqttplot     # Application logs
+/etc/mqttplot         # Configuration
 ```
 
 - Creates a Python virtual environment
@@ -209,23 +228,22 @@ removes any existing databases under `/var/lib/mqttplot` before starting.
 After Installation, edit the environment file created by the installer.
 
 ```bash
-sudo nano /opt/mqttplot/secret.env
+sudo nano /etc/mqttplot/mqttplot.env
 ```
 
 Typical contents:
 
 ```text
-MQTT_BROKER=192.168.12.50
-MQTT_PORT=1883
-MQTT_USERNAME=example-user
-MQTT_PASSWORD=example-pass
-MQTT_TOPICS=watergauge/#
-FLASK_PORT=5000
-DB_PATH=/opt/mqttplot/mqtt_data.db
-DATA_DB_DIR=/opt/mqttplot/data
-MQTTPLOT_BACKUP_DIR=/opt/mqttplot/backups
-MQTTPLOT_BACKUP_KEEP=10
-SECRET_KEY=<generated-by-installer>
+MQTTPLOT_MQTT_HOST=localhost
+MQTTPLOT_MQTT_PORT=1883
+MQTTPLOT_MQTT_USERNAME=
+MQTTPLOT_MQTT_PASSWORD=
+
+MQTTPLOT_DB_ROOT=/var/lib/mqttplot
+MQTTPLOT_LOG_LEVEL=INFO
+
+# Admin protection (project-specific)
+MQTTPLOT_ADMIN_SECRET=changeme
 ```
 
 ---
@@ -247,43 +265,6 @@ sudo systemctl enable mqttplot
 ```
 
 ---
-
-
-### CLI Operations
-
-The installer now adds a dedicated operational CLI:
-
-```bash
-sudo mqttplot status
-sudo mqttplot db-info
-sudo mqttplot backup
-sudo mqttplot reset-admin-password
-sudo mqttplot reload
-```
-
-Command summary:
-
-- `mqttplot status` shows version, configured broker/topics, systemd state,
-  and the local `/api/health` response when reachable.
-- `mqttplot db-info` inspects the metadata database and all per-root data
-  databases. Use `--json` for machine-readable output.
-- `mqttplot backup` creates a timestamped `.tar.gz` archive containing SQLite
-  snapshots and rotates older archives automatically.
-- `mqttplot reset-admin-password` securely resets the `admin` password.
-- `mqttplot reload` restarts the systemd service so edits to `secret.env` take
-  effect immediately.
-
-### Health Endpoint
-
-MQTTPlot now exposes a lightweight health endpoint:
-
-```text
-GET /api/health
-```
-
-It returns the running version, MQTT connection state, metadata DB presence,
-and data DB inventory. This is suitable for quick diagnostics and service
-monitoring.
 
 ### Logs
 
@@ -351,11 +332,10 @@ Recommendations:
 
 ### Storage Layout
 
-MQTTPlot persists metadata in `/opt/mqttplot/mqtt_data.db` and time-series data in per-root databases under the configured `DATA_DB_DIR` (typically `/opt/mqttplot/data`).
+MQTTPlot persists data under the configured MQTTPLOT_DB_ROOT directory. Typically:
 
-- One SQLite database per top-level topic root
-- Schema is created automatically if missing
-- Backups are written to `/opt/mqttplot/backups` by the CLI
+- One SQLite database per topic (or per logical channel), depending on configuration.
+- Schema is created automatically if missing.
 
 #### Performance
 
