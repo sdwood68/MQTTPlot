@@ -403,8 +403,8 @@ def _fetch_topic_bounds(topic: str) -> dict | None:
         return None
 
     return {
-        "min_ts": datetime.fromtimestamp(float(r["min_ts"])).isoformat(),
-        "max_ts": datetime.fromtimestamp(float(r["max_ts"])).isoformat(),
+        "min_ts": _dt_from_epoch_local(float(r["min_ts"])).isoformat(),
+        "max_ts": _dt_from_epoch_local(float(r["max_ts"])).isoformat(),
     }
 
 @app.route("/api/bounds")
