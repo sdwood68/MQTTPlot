@@ -264,6 +264,25 @@ def _default_system_tz() -> str:
         pass
     return os.environ.get("TZ") or "UTC"
 
+def get_time_zone_choices(current_tz: str | None = None) -> list[str]:
+    """Return sorted IANA time zone names for the admin dropdown."""
+    zones: list[str]
+    try:
+        from zoneinfo import available_timezones
+        zones = sorted(available_timezones())
+    except Exception:
+        zones = [
+            "UTC",
+            "America/New_York",
+            "America/Chicago",
+            "America/Denver",
+            "America/Los_Angeles",
+        ]
+
+    current = (current_tz or "").strip()
+    if current and current not in zones:
+        zones.insert(0, current)
+    return zones
 
 def get_time_zone() -> str:
     tz = get_app_meta_value('app.timezone', None)
@@ -582,14 +601,24 @@ def index():
         )
         public_plots = [dict(r) for r in cur.fetchall()]
 
+    current_tz = get_time_zone()
+    current_broker_host = get_app_meta_value('mqtt.broker', None) or config.MQTT_BROKER
+    current_broker_port = int(get_app_meta_value('mqtt.port', None) or config.MQTT_PORT)
+    current_broker_topics = get_app_meta_value('mqtt.topics', None) or config.MQTT_TOPICS
+
     return render_template(
         "index.html",
-        broker=f"{get_app_meta_value('mqtt.broker', None) or config.MQTT_BROKER}:{int(get_app_meta_value('mqtt.port', None) or config.MQTT_PORT)}",
+        broker=f"{current_broker_host}:{current_broker_port}",
         admin=admin,
         admin_user=session.get("admin_user"),
         public_plots=public_plots,
         app_version=__version__,
         csrf_token=session.get("csrf_token"),
+        current_tz=current_tz,
+        tz_list=get_time_zone_choices(current_tz),
+        current_broker_host=current_broker_host,
+        current_broker_port=current_broker_port,
+        current_broker_topics=current_broker_topics,
     )
 
 
