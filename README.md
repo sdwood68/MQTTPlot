@@ -1,7 +1,17 @@
 # MQTTPlot
 
+MQTTPlot is a lightweight MQTT data ingestion and visualization service for
+long-running IoT and telemetry systems. It subscribes to MQTT topics, stores
+time-series data in SQLite, and serves interactive Plotly-based charts through
+a web interface.
 
-## 0.8.3-dev highlights
+Version **0.8.3** focuses on release hardening and operational tooling. It adds
+a small admin/ops CLI, service health reporting, installer improvements, and a
+working Broker Settings time-zone selector in the admin UI.
+
+---
+
+## What is new in 0.8.3
 
 - Installer now installs `sqlite3` and `rsync` automatically.
 - Installer adds a UFW allow rule for the configured Flask port when UFW is
@@ -13,66 +23,55 @@
   - `mqttplot reset-admin-password`
   - `mqttplot reload`
 - Added `/api/health` for basic service health checks.
-
-### Notes for install
-
-- `mqttplot reload` restarts the systemd service so edits to `secret.env`
-  take effect immediately.
-- `mqttplot backup` creates ZIP archives under `/opt/mqttplot/backups` and
-  rotates older archives automatically.
-
-**MQTTPlot** is a lightweight MQTT data ingestion and visualization service
-designed for long-running IoT and telemetry systems. It subscribes to MQTT
-topics, persists time-series data to SQLite, and serves interactive Plotly-based
-graphs via a web interface.
-
-Version **0.8.1** expands on the public viewer/admin workflow with a unified
-plot window, stronger topic hierarchy tools, retention/validation controls, and
-persistent app settings. **public, slug-based plot URLs**,
-**multi-topic plotting**, and **embeddable plot views**, enabling MQTTPlot to
-act as a read-only visualization endpoint without exposing internal configuration.
+- Fixed the Broker Settings time-zone dropdown so the admin can select and save
+  an IANA time zone.
 
 ---
 
-## Key Features
+## Key features
 
 ### Core
 
 - MQTT subscription with wildcard topic support
-- Persistent SQLite storage per topic
+- Persistent SQLite storage
+  - one metadata DB for admin/app state
+  - one data DB per top-level MQTT topic under `DATA_DB_DIR`
 - Automatic database creation and schema management
 - Time-windowed queries optimized for plotting
 
-### Plotting & UI
+### Plotting and UI
 
 - Interactive Plotly graphs
-- Multi-topic plots (multiple series per chart)
-- Dual Y-axis support with aligned major units
-- In-plot navigation and controls
+- Multi-topic plots with one or two Y axes
+- In-plot navigation controls
 - Preview thumbnails for plots
+- Admin and public plot pages share the same plot window behavior
 
-### Public Access (New in 0.7.0)
+### Public access
 
 - Slug-based public plot URLs
-- Read-only embedded plot views
-- No exposure of MQTT topics, database paths, or credentials
-- Suitable for dashboards, iframes, and wall displays
+- Read-only plot views suitable for dashboards and wall displays
+- Public pages do not expose internal MQTT topic names or credentials
+- Suitable for iframe embedding
 
 ### Administration
 
-- Admin-only configuration views
+- Password-protected admin views
 - Topic-to-plot mapping control
-- Plot metadata management (titles, units, axes)
-- Separation of admin and public concerns
+- Plot metadata management
+- Broker Settings for time zone, broker host, broker port, and topic filter
+- Operational CLI for backup, service status, and password reset
 
-## Architecture Overview
+---
 
-MQTTPlot consists of four layers:
+## Architecture overview
 
-1) **Ingestion** (MQTT client subscribes to topics)
-2) **Persistence** (SQLite stores time-series samples)
-3) **Plot definitions** (metadata describing what/how to graph)
-4) **Presentation** (admin UI + public, slug-based routes)
+MQTTPlot has four primary layers:
+
+1. **Ingestion**: MQTT client subscribes to topics and receives messages.
+2. **Persistence**: SQLite stores metadata and per-topic time-series data.
+3. **Plot definitions**: metadata describes what to graph and how to present it.
+4. **Presentation**: admin UI and public slug-based routes render plots.
 
 ```text
                     ┌──────────────────────────┐
@@ -89,7 +88,7 @@ MQTTPlot consists of four layers:
                                  ▼
                     ┌───────────────────────────┐
                     │    2) SQLite Persistence  │
-                    │  (time-series per topic)  │
+                    │  meta DB + per-root DBs   │
                     └────────────┬──────────────┘
                                  │
                ┌─────────────────┴─────────────────┐
@@ -101,85 +100,23 @@ MQTTPlot consists of four layers:
                 │                                  │
                 ▼                                  ▼
 ┌──────────────────────────────┐     ┌──────────────────────────────┐
-│       4A) ADMIN UI           │     │      5B) PUBLIC PLOTS        │
+│       4A) ADMIN UI           │     │      4B) PUBLIC PLOTS        │
 │   (authenticated / private)  │     │     (read-only / shared)     │
-│                              │     │                              │
-│ • Configure plots            │     │ • Slug-based URLs            │
-│ • Select MQTT topics         │     │ • No topic names visible     │
-│ • Assign axes & units        │     │ • No configuration access    │
-│ • Manage slugs               │     │ • Safe iframe embedding      │
-│ • Preview plots              │     │ • Plot navigation controls   │
-│                              │     │                              │
 └──────────────────────────────┘     └──────────────────────────────┘
 ```
-
-### Data Flow
-
-1. MQTT messages arrive on subscribed topics.
-2. Messages are parsed and stored to the topic’s SQLite database.
-3. Plot routes query the database for a time window.
-4. Plotly renders interactive charts in the browser.
-
-### Separation of Concerns (0.7.0)
-
-- **Admin** routes expose configuration tools and internal details (protected).
-- **Public** routes expose only plots via **slugs** (no internal topic names).
-
----
-
-## Slug-Based Plot URLs
-
-A **slug** is a short, URL-safe identifier that represents a plot definition.
-
-Examples:
-
-```text
-/plot/watergauge/height
-/plot/outdoor-temperature
-```
-
-Key properties:
-
-- Slugs map internally to one or more MQTT topics (one plot, many series).
-- Public users never see topic names, database paths, or credentials.
-- Slugs are stable and suitable for bookmarks or embedding.
-
----
-
-## Public vs Admin Views
-
-### Public (Read-Only)
-
-- Intended for sharing, embedding, and unattended displays
-- Shows the plot title, axes labels, series legend, and navigation controls
-- Does not expose configuration, topic names, or backend details
-
-### Admin
-
-- Configure plots (title, units, axis assignment, series selection)
-- Control what becomes public (by enabling a slug)
-- Manage topic/series definitions and presentation settings
 
 ---
 
 ## Installation
 
-MQTTPlot 0.7.0 includes dedicated **service install and uninstall scripts**
-intended for Linux systems using `systemd`. These scripts provide a repeatable,
-production-oriented installation with a dedicated service user and persistent
-data storage.
-
----
+The supported Linux install path uses the provided systemd installer scripts.
 
 ### Prerequisites
 
 - Linux system with `systemd`
 - Root or sudo access
 - Python 3.10+
-- SQLite 3
-- Reachable MQTT broker (Mosquitto recommended)
-
----
+- Reachable MQTT broker
 
 ### Install
 
@@ -188,129 +125,259 @@ From the project root:
 ```bash
 git clone https://github.com/sdwood68/MQTTPlot.git
 cd MQTTPlot
-chmod +x install.sh uninstall.sh
-sudo ./install.sh
+chmod +x install_service.sh uninstall_service.sh
+sudo ./install_service.sh
 ```
 
-#### What the installer does
-
-- Installs MQTTPlot under: `/opt/mqttplot`
-- Creates a dedicated system user: `mqttplot`
-- Creates persistent directories:
-
-```text
-/var/lib/mqttplot     # SQLite databases
-/var/log/mqttplot     # Application logs
-/etc/mqttplot         # Configuration
-```
-
-- Creates a Python virtual environment
-- Installs required Python dependencies
-- Installs and enables a systemd service: `mqttplot.service`
-
-The service runs as the **mqttplot** user (not root).
-
-### Optional Install Flags
+### Optional install flag
 
 ```bash
 sudo ./install_service.sh --reset-db
 ```
 
-- `--reset-db`
-removes any existing databases under `/var/lib/mqttplot` before starting.
+Use `--reset-db` only when you want the installer to discard the existing
+metadata DB at `/opt/mqttplot/mqtt_data.db` before first start.
 
-***Use with caution***
+### What the installer does
+
+- Installs MQTTPlot under `/opt/mqttplot`
+- Creates the `mqttplot` system user if needed
+- Creates these persistent paths:
+
+```text
+/opt/mqttplot/mqtt_data.db   metadata DB
+/opt/mqttplot/data/          per-top-level-topic SQLite DB files
+/opt/mqttplot/backups/       ZIP backups from mqttplot backup
+/opt/mqttplot/secret.env     runtime configuration
+/var/log/mqttplot/           service log output
+```
+
+- Creates a Python virtual environment in `/opt/mqttplot/venv`
+- Installs Python dependencies from `requirements.txt`
+- Installs `/etc/systemd/system/mqttplot.service`
+- Installs the `/usr/local/bin/mqttplot` operational CLI wrapper
+- Opens the configured Flask port in UFW when UFW is active
 
 ---
 
-### Configuration
+## Configuration
 
-After Installation, edit the environment file created by the installer.
+The installer creates `/opt/mqttplot/secret.env`. Edit that file to change the
+runtime configuration that is loaded by the service and the CLI.
 
 ```bash
-sudo nano /etc/mqttplot/mqttplot.env
+sudo nano /opt/mqttplot/secret.env
 ```
 
 Typical contents:
 
 ```text
-MQTTPLOT_MQTT_HOST=localhost
-MQTTPLOT_MQTT_PORT=1883
-MQTTPLOT_MQTT_USERNAME=
-MQTTPLOT_MQTT_PASSWORD=
-
-MQTTPLOT_DB_ROOT=/var/lib/mqttplot
-MQTTPLOT_LOG_LEVEL=INFO
-
-# Admin protection (project-specific)
-MQTTPLOT_ADMIN_SECRET=changeme
+MQTT_BROKER=192.168.12.50
+MQTT_PORT=1883
+MQTT_USERNAME=
+MQTT_PASSWORD=
+MQTT_TOPICS=watergauge/#
+FLASK_PORT=5000
+DB_PATH=/opt/mqttplot/mqtt_data.db
+DATA_DB_DIR=/opt/mqttplot/data
+SECRET_KEY=change-me
 ```
+
+### Applying configuration changes
+
+After editing `secret.env`, restart the service or use:
+
+```bash
+sudo mqttplot reload
+```
+
+`mqttplot reload` currently performs a service restart so the new values in
+`secret.env` are reloaded immediately.
 
 ---
 
-### Service Control
+## Service usage
 
-#### Start / Stop (systemd)
+### systemd
 
 ```bash
-sudo systemctl start mqttplot
-sudo systemctl stop mqttplot
 sudo systemctl status mqttplot
-```
-
-#### Enable at Boot
-
-```bash
-sudo systemctl enable mqttplot
-```
-
----
-
-### Logs
-
-Log are available via `journalctl`:
-
-```bash
+sudo systemctl restart mqttplot
 sudo journalctl -u mqttplot -f
 ```
 
----
+### mqttplot operational CLI
 
-### Uninstall
+The installer places a wrapper at `/usr/local/bin/mqttplot`.
 
-To remove MQTTPlot installed via the installer:
-
-```bash
-sudo ./uninstall_service.sh
-```
-
-#### Uninstall Options
+#### Show service status
 
 ```bash
-sudo ./uninstall_service.sh --purge-data
-sudo ./uninstall_service.sh --remove-user
+sudo mqttplot status
 ```
 
-- `--purge-data`
-Deletes `/var/lib/mqttplot` (all stored data)
-- `--remove-user`
-Removes the `mqttplot` system user
+This runs `systemctl status mqttplot` with `--no-pager --full`.
 
-#### By default
+#### Reload configuration
 
-- Data is preserved
-- The service user is retained.
+```bash
+sudo mqttplot reload
+```
+
+Use this after editing `/opt/mqttplot/secret.env`.
+
+#### Reset the admin password
+
+Interactive mode:
+
+```bash
+sudo mqttplot reset-admin-password
+```
+
+Non-interactive mode:
+
+```bash
+sudo mqttplot reset-admin-password --password 'NewStrongPassword'
+```
+
+This updates the password for the built-in `admin` user in the metadata DB.
+
+#### Show database locations and sizes
+
+```bash
+sudo mqttplot db-info
+```
+
+This reports:
+
+- the running MQTTPlot version
+- the metadata DB path and size
+- the data DB directory
+- the number of per-topic DB files and their sizes
+
+#### Create a backup ZIP
+
+```bash
+sudo mqttplot backup
+```
+
+Optional arguments:
+
+```bash
+sudo mqttplot backup --output /opt/mqttplot/backups --keep 5
+```
+
+Behavior:
+
+- copies the metadata DB and the full data DB directory into a timestamped
+  staging directory
+- packages the staging directory into a ZIP archive
+- removes the staging directory
+- rotates older archives and keeps the newest `--keep` ZIP files
+
+Backups are written to `/opt/mqttplot/backups` by default.
+
+> Note: in 0.8.3, backups are file copies of live SQLite databases. A later
+> roadmap item tracks moving this to the SQLite backup API for cleaner hot
+> snapshots.
+
+### Restore from backup
+
+A manual restore is straightforward:
+
+1. Stop the service.
+2. Unzip the backup archive to a temporary directory.
+3. Copy `mqtt_data.db` back to `/opt/mqttplot/`.
+4. Copy the saved `data/` directory back to `/opt/mqttplot/data/`.
+5. Ensure ownership is `mqttplot:mqttplot` for restored DB files.
+6. Start the service.
+
+Example:
+
+```bash
+sudo systemctl stop mqttplot
+cd /tmp
+unzip /opt/mqttplot/backups/mqttplot-backup-YYYYMMDD-HHMMSS.zip -d mqttplot-restore
+sudo cp -f mqttplot-restore/mqtt_data.db /opt/mqttplot/
+sudo rsync -a --delete mqttplot-restore/data/ /opt/mqttplot/data/
+sudo chown mqttplot:mqttplot /opt/mqttplot/mqtt_data.db
+sudo chown -R mqttplot:mqttplot /opt/mqttplot/data
+sudo systemctl start mqttplot
+```
 
 ---
 
-### Manual / Development Mode (Optional)
+## Admin UI notes
 
-For development or testing without system installation, MQTTPlot can still be
-run directly via Python. See app.py and inline comments for details.
+### Broker Settings
 
-Production deployments should use the service installer.
+In admin mode, the **Broker Settings** panel lets you update:
 
-## Embedded Plots
+- **Time zone**
+- **Broker host**
+- **Broker port**
+- **Topic filter**
+
+The time-zone dropdown is populated with IANA time-zone names such as:
+
+- `UTC`
+- `America/New_York`
+- `America/Chicago`
+- `America/Denver`
+- `America/Los_Angeles`
+
+The selected time zone is used when the UI formats timestamps for plots and
+other time-related displays.
+
+Broker Settings are stored in the metadata DB. If broker host, port, or topic
+settings are changed, use `sudo mqttplot reload` to restart the service so the
+MQTT client reconnects using the updated values.
+
+### Public versus admin views
+
+**Public views** are intended for shared, read-only access.
+
+- show plots by slug
+- do not expose internal topic names or credentials
+- suitable for embedding
+
+**Admin views** expose configuration and operational controls.
+
+- manage plot definitions and topic metadata
+- edit Broker Settings
+- access admin-only APIs
+
+---
+
+## Health endpoint
+
+MQTTPlot 0.8.3 includes a basic health endpoint:
+
+```text
+GET /api/health
+```
+
+Example:
+
+```bash
+curl http://127.0.0.1:5000/api/health
+```
+
+Typical response fields:
+
+- `ok`
+- `version`
+- `mqtt`
+- `meta_db.path`
+- `meta_db.exists`
+- `data_db_dir.path`
+- `data_db_dir.exists`
+
+This endpoint is useful for simple service monitoring and deployment checks.
+
+---
+
+## Embedded plots
 
 Public plots can be embedded using an iframe:
 
@@ -325,62 +392,62 @@ Public plots can be embedded using an iframe:
 
 Recommendations:
 
-- Use a fixed height for stable dashboard layouts.
-- Prefer a reverse proxy (nginx/Caddy) for TLS termination in production.
+- use a fixed height for stable dashboard layouts
+- prefer a reverse proxy such as nginx or Caddy for TLS termination in
+  production
 
-## Operational Notes
+---
 
-### Storage Layout
+## Uninstall
 
-MQTTPlot persists data under the configured MQTTPLOT_DB_ROOT directory. Typically:
+To remove MQTTPlot installed via the service installer:
 
-- One SQLite database per topic (or per logical channel), depending on configuration.
-- Schema is created automatically if missing.
+```bash
+sudo ./uninstall_service.sh
+```
 
-#### Performance
+Options:
 
-- Plot routes query by time window.
-- Multi-topic plots issue one query per series (unless optimized in your build).
-- For high-frequency sensors, plan for retention/downsampling in a future release.
+```bash
+sudo ./uninstall_service.sh --purge-data
+sudo ./uninstall_service.sh --remove-user
+```
 
-### Security Model
+- `--purge-data` removes `/opt/mqttplot`, including DB files and backups
+- `--remove-user` removes the `mqttplot` system user
 
-- MQTT credentials are server-side only; never returned to clients.
-- Public endpoints are strictly read-only.
-- Admin endpoints are protected and should not be exposed without authentication
-controls.
-- Slugs are the only public identifiers; internal topic names remain private.
+By default, the uninstaller preserves `/opt/mqttplot/mqtt_data.db`,
+`/opt/mqttplot/data`, and `/opt/mqttplot/backups`.
 
-## Versioning
-
-MQTTPlot follows semantic versioning:
-
-- 0.6.x – Single-topic plots, admin-centric UI
-- 0.7.0 – Public slugs, multi-topic plots, embedding
-- 0.8.x (planned) – Auth, dashboards, retention policies
+---
 
 ## Docker
 
-Build and run MQTTPlot using Docker:
+Build and run MQTTPlot with Docker:
 
 ```bash
-docker build -t mqttplot:0.8.0.1 .
+docker build -t mqttplot:0.8.3 .
 
-# Example run: bind web port and persist data/db
 mkdir -p ./data
 
-docker run --rm -it \
-  -p 5000:5000 \
-  -e MQTT_BROKER=192.168.12.50 \
-  -e MQTT_PORT=1883 \
-  -e MQTT_TOPICS="#" \
-  -e DB_PATH=/data/mqtt_data.db \
-  -e DATA_DB_DIR=/data/topics \
-  -v "$(pwd)/data:/data" \
-  mqttplot:0.8.0.1
+docker run --rm -it   -p 5000:5000   -e MQTT_BROKER=192.168.12.50   -e MQTT_PORT=1883   -e MQTT_TOPICS=watergauge/#   -e DB_PATH=/data/mqtt_data.db   -e DATA_DB_DIR=/data/topics   -v "$(pwd)/data:/data"   mqttplot:0.8.3
 ```
 
 Notes:
 
 - `DB_PATH` is the metadata/admin database.
 - `DATA_DB_DIR` holds the per-top-level-topic SQLite DB files.
+
+---
+
+## Versioning
+
+MQTTPlot follows semantic versioning.
+
+Recent milestones:
+
+- 0.8.0: admin UI and unified plot system
+- 0.8.1: admin page cleanup and Broker Settings UI changes
+- 0.8.2: version display and reduced polling behavior
+- 0.8.3: operational tooling, `/api/health`, installer improvements, and the
+  Broker Settings time-zone dropdown fix

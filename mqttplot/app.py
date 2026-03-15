@@ -32,6 +32,11 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import secrets
 from version import __version__
 
+try:
+    from zoneinfo import available_timezones
+except Exception:  # pragma: no cover
+    available_timezones = None
+
 
 SECRET_ENV_FILE = os.environ.get("MQTTPLOT_SECRET_FILE", "/opt/mqttplot/secret.env")
 if os.path.exists(SECRET_ENV_FILE):
@@ -118,6 +123,31 @@ def parse_time(s):
             return datetime.fromtimestamp(float(s))
         except:
             raise ValueError('invalid time')
+
+
+def get_time_zone_choices(current_tz: str | None = None) -> list[str]:
+    """Return sorted IANA time zone names for the admin dropdown."""
+    if available_timezones is not None:
+        try:
+            zones = sorted(available_timezones())
+        except Exception:
+            zones = []
+    else:
+        zones = []
+
+    if not zones:
+        zones = [
+            "UTC",
+            "America/New_York",
+            "America/Chicago",
+            "America/Denver",
+            "America/Los_Angeles",
+        ]
+
+    current = (current_tz or "").strip()
+    if current and current not in zones:
+        zones.insert(0, current)
+    return zones
 
 
 @app.get("/api/mqtt/status")
@@ -264,25 +294,6 @@ def _default_system_tz() -> str:
         pass
     return os.environ.get("TZ") or "UTC"
 
-def get_time_zone_choices(current_tz: str | None = None) -> list[str]:
-    """Return sorted IANA time zone names for the admin dropdown."""
-    zones: list[str]
-    try:
-        from zoneinfo import available_timezones
-        zones = sorted(available_timezones())
-    except Exception:
-        zones = [
-            "UTC",
-            "America/New_York",
-            "America/Chicago",
-            "America/Denver",
-            "America/Los_Angeles",
-        ]
-
-    current = (current_tz or "").strip()
-    if current and current not in zones:
-        zones.insert(0, current)
-    return zones
 
 def get_time_zone() -> str:
     tz = get_app_meta_value('app.timezone', None)
@@ -601,7 +612,7 @@ def index():
         )
         public_plots = [dict(r) for r in cur.fetchall()]
 
-    current_tz = get_time_zone()
+    current_tz = get_app_meta_value('app.timezone', None) or 'UTC'
     current_broker_host = get_app_meta_value('mqtt.broker', None) or config.MQTT_BROKER
     current_broker_port = int(get_app_meta_value('mqtt.port', None) or config.MQTT_PORT)
     current_broker_topics = get_app_meta_value('mqtt.topics', None) or config.MQTT_TOPICS

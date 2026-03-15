@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.8.3-dev 2026-03-07
+## 0.8.3 2026-03-14
 
 ### Added
 
@@ -24,6 +24,8 @@
 
 - Removed the duplicate/broken systemd service block in
   `install_service.sh`.
+- Fixed the admin Broker Settings time-zone dropdown so the IANA
+  time-zone selector is populated correctly.
 - Fixed installer failures caused by partial or stale `venv` state.
 - Aligned the top-level `mqttplot.service` with the deployed systemd unit.
 

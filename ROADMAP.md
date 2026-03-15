@@ -87,29 +87,39 @@ two-topic axes)
   - Ensure the Flask/Werkzeug debug reloader does not start the MQTT client twice
     (prevents duplicate RX logs and duplicate ingestion during debug)
 
-## Planned
-
 ### 0.8.3 — Operational Tooling
 
-- Add firewall rule handling to install scripts
-  - `sudo ufw allow 5000/tcp` when UFW is installed and active
-- Add `sqlite3` to the installer
-- Add `mqttplot reset-admin-password`
-- Add `mqttplot reload` so `secret.env` edits do not require manual service
-  commands
-- Add `mqttplot status`
-- Add `mqttplot db-info`
-- Add `mqttplot backup` with backup ZIP rotation
-- Add `/api/health` for basic service monitoring
+- Installer handles UFW allow rules for the configured Flask port when UFW is
+  installed and active
+- Installer adds `sqlite3` and `rsync`
+- Operational CLI
+  - `mqttplot status`
+  - `mqttplot db-info`
+  - `mqttplot backup`
+  - `mqttplot reset-admin-password`
+  - `mqttplot reload`
+- `/api/health` for basic service monitoring
+- Admin Broker Settings time-zone dropdown now populates correctly
+
+## Planned
+
+### 0.8.4 — Backup Hardening
+
+- Update `mqttplot backup` to use the SQLite backup API for the metadata DB and
+  per-topic data DB snapshots before packaging them into the ZIP archive
 
 ### 0.9.x — MQTT JSON Data Payloads
+
+- Add Y-Axis plot limits, Major and minor tick sizes for published plots.
+
+### 0.10.x — MQTT JSON Data Payloads
 
 - Add support for receiving MQTT data as a JSON payload that includes:
   - value
   - units
 - Automatically assign plot units from the JSON payload when specified
 
-### 0.10.x — Data Management and Scale
+### 0.11.x — Data Management and Scale
 
 - Admin Page
   - Add a checkbox per subtopic to ignore incoming data (stop storing when checked)
@@ -121,7 +131,7 @@ two-topic axes)
   protection
 - Drop any data points that fall outside the per-topic min/max limits
 
-### 0.11.x — Small Plot Preview Windows
+### 0.12.x — Small Plot Preview Windows
 
 - Create a plot preview that is ~50% smaller than the normal plot
 - The slug links to the plot preview
